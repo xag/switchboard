@@ -1,0 +1,120 @@
+"""The app-side door: how any app reaches the channel.
+
+An app names itself, pairs once (showing the code the user will match in their client), then
+sends requests and waits for results. Liveness is a first-class fact: if the switchboard
+dies, the app goes `stale` — its token belonged to that daemon's lifetime, so a restarted
+switchboard means re-pairing, and the app can see that rather than hang on a dead channel.
+
+This is a thin, dependency-free client over the JSON wire; an app in any language can
+reimplement it from `protocol.py`. The primitives are `begin_pairing` / `await_pairing`
+(the app owns how it shows the code to the user) and `ask`; `pair_and_ask` composes them
+for the common case.
+"""
+
+from __future__ import annotations
+
+import time
+from typing import Any, Callable, Optional
+
+from . import discovery, protocol
+from .protocol import V
+
+
+class Stale(Exception):
+    """No live switchboard is reachable — the channel is down."""
+
+
+class Denied(Exception):
+    """The user declined the pairing."""
+
+
+class NotPaired(Exception):
+    """A request was sent before the app paired. Carries the code to show the user."""
+
+    def __init__(self, code: str, pairing_id: str) -> None:
+        super().__init__("app is not paired to the switchboard")
+        self.code = code
+        self.pairing_id = pairing_id
+
+
+class App:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.token: Optional[str] = None
+        self._info: Optional[dict] = None
+        self._pairing_id: Optional[str] = None
+
+    # -- liveness -------------------------------------------------------------------
+
+    @property
+    def stale(self) -> bool:
+        """True if the switchboard this app knew is no longer answering (dead, or replaced
+        by a different daemon whose nonce differs)."""
+        if self._info is None:
+            return discovery.alive() is None
+        return discovery.alive(info=self._info) is None
+
+    def _endpoint(self) -> protocol.Endpoint:
+        info = discovery.alive()
+        if not info:
+            raise Stale("no live switchboard")
+        # A restarted daemon invalidates our token — its pairings lived in memory.
+        if self._info and info.get("nonce") != self._info.get("nonce"):
+            self.token = None
+        self._info = info
+        return discovery.endpoint_of(info)
+
+    # -- pairing --------------------------------------------------------------------
+
+    def begin_pairing(self) -> str:
+        """Open a pairing and return the code to show the user. The user matches it in
+        their client and authorizes there."""
+        r = protocol.call(self._endpoint(), V.PAIR_REQUEST, app=self.name)
+        if not r.get("ok"):
+            raise RuntimeError(r.get("error", "pair_request failed"))
+        self._pairing_id = r["pairing_id"]
+        return r["code"]
+
+    def await_pairing(self, wait: float = 120.0, poll: float = 1.0) -> str:
+        """Block until the user authorizes (or denies / times out), returning the token."""
+        if not self._pairing_id:
+            raise RuntimeError("begin_pairing first")
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            s = protocol.call(self._endpoint(), V.PAIR_STATUS,
+                              pairing_id=self._pairing_id)
+            if s.get("status") == "authorized":
+                self.token = s["token"]
+                return self.token
+            if s.get("status") == "denied":
+                raise Denied("pairing was declined")
+            time.sleep(poll)
+        raise TimeoutError(f"pairing not authorized within {wait}s")
+
+    # -- requests -------------------------------------------------------------------
+
+    def ask(self, request: Any, wait: float = 120.0) -> Any:
+        """Send a request and return the client's result. Raises NotPaired if the app has
+        no valid token yet (the first request patches through to a pairing)."""
+        ep = self._endpoint()
+        r = protocol.call(ep, V.ASK, token=self.token, app=self.name, request=request)
+        if not r.get("ok"):
+            if r.get("status") == "unpaired":
+                self._pairing_id = r["pairing_id"]
+                raise NotPaired(r["code"], r["pairing_id"])
+            raise RuntimeError(r.get("error", "ask failed"))
+        rid = r["request_id"]
+        res = protocol.call(ep, V.AWAIT_RESULT, request_id=rid, wait=wait,
+                            timeout=wait + 10.0)
+        if res.get("status") == "done":
+            return res["result"]
+        raise TimeoutError(f"no result for {rid} within {wait}s")
+
+    def pair_and_ask(self, request: Any, show_code: Callable[[str], None],
+                     pair_wait: float = 120.0, ask_wait: float = 120.0) -> Any:
+        """The common case: ensure paired (showing the code via `show_code`), then ask."""
+        if not self.token:
+            code = self.begin_pairing()
+            show_code(code)
+            self.await_pairing(wait=pair_wait)
+        return self.ask(request, wait=ask_wait)
