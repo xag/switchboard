@@ -2,10 +2,8 @@
 
     daemon          Run the broker in the foreground (the hook spawns this detached).
     hook            SessionStart hook: bring the shared daemon up idempotently, then exit.
-    mcp             Serve the MCP surface on stdio (the pairing tool + the return path).
+    mcp             Serve the MCP surface on stdio (pairing + the return path).
     status          Print whether a live switchboard is reachable, and where.
-
-The daemon owns stdout when it runs under stream protocols; human lines go to stderr.
 """
 
 from __future__ import annotations
@@ -34,10 +32,6 @@ def main(argv: list[str]) -> int:
 
     if cmd == "mcp":
         from .mcp_server import serve
-        return serve()
-
-    if cmd == "servicer":
-        from .servicer import serve
         return serve()
 
     if cmd == "status":

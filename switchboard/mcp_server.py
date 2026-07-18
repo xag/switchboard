@@ -1,19 +1,13 @@
 """The MCP surface the client mounts: the user's side of the switchboard.
 
-Two jobs, both driven by tools the client calls: authorize an app that wants to pair
-(`switchboard_pairings` to see who is asking, `switchboard_authorize` to admit them), and
-service the requests a paired app sends (`switchboard_take` to pull the next one,
-`switchboard_deliver` to return the result). The tools are the return path the ledger
-names — an MCP tool is an ordinary subprocess, so it reaches the daemon over the same
-loopback wire an app uses.
+Tools the user's own session calls: authorize an app that wants to pair
+(`switchboard_pairings`, `switchboard_authorize`), and service the requests a paired app
+sends (`switchboard_take` to pull the next, `switchboard_deliver` to return the result). An
+MCP tool is an ordinary subprocess, so it reaches the daemon over the same loopback wire an
+app uses. When the session calls them is the client's concern, not switchboard's.
 
-What this module does NOT decide is *when* the client calls these tools. Servicing a
-request "with no extra user turn" is the injection question (the live-session hypothesis)
-handled by the hook/spike, not here; here the tools simply exist and work when called,
-whether by a human, or by a turn the switchboard injected.
-
-flight-recorder wraps every tool call, so a session's pairings and deliveries land on
-tapes under ~/.switchboard/flight — the recorded surface of the channel.
+flight-recorder wraps every tool call, so a session's pairings and deliveries land on tapes
+under ~/.switchboard/flight.
 """
 
 from __future__ import annotations

@@ -1,12 +1,5 @@
 """The design ledger — switchboard's own decisions, as data a rule can go red on.
 
-Day one, per the estate's standing practice: every non-obvious decision with the
-alternatives it rejected, every load-bearing belief with what would kill it, every known
-shortcut with the condition that discharges it. switchboard brokers messages between an
-app and a live AI-client session; it is not a quern tree, so quern holds only this record,
-not the runtime state. The flight boundary (switchboard/boundary.py) is the other day-one
-artifact; the two arrive together with the first commit.
-
     uv run --group ledger python -m ledger.check
 """
 
@@ -15,7 +8,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import quern.grounding  # noqa: F401 — the grounding natives, for any gate rules
+import quern.grounding  # noqa: F401 — grounding natives, for any gate rules
 from quern import Node, Quern
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -27,48 +20,26 @@ def build() -> Quern:
                                               _ROOT.parent / "quern-registry"))
     quern = Quern(packages=[next(r for r in refs if r.name == "ledger")])
     quern = lib.effective(quern)
-    quern.root.children = [_SINGLETON, _TRANSPORT, _PAIRING, _TRANSPORTS_NOT_ADJUDICATES,
-                           _WRITE_AHEAD, _CLIENT_IS_LIVE, _SERVICER_OWN_SESSION,
-                           _TRANSCRIPT_GAP, _DAEMON_UNRECORDED]
+    quern.root.children = [_SINGLETON, _TRANSPORT, _PAIRING, _NEUTRAL, _WRITE_AHEAD,
+                           _EXISTING_SESSION]
     return quern
 
 
 _SINGLETON = Node(
     id="one-shared-broker-per-user",
     kind="decision",
-    name="The switchboard is a single shared broker per user — spawned idempotently by "
-         "a SessionStart hook, guarded by a discovery file, never one-per-app or "
-         "one-per-session",
+    name="One shared broker per user, spawned idempotently by a SessionStart hook",
     payload={
         "rationale":
-            "The whole value is a channel any app can reach and any of the user's "
-            "sessions can service — a shared switchboard, not a private wire. So the "
-            "hook that spawns it must be idempotent: the first session to start brings "
-            "the daemon up and writes a discovery file (endpoint + pid + nonce); every "
-            "later session finds it already live and does nothing. A per-app or "
-            "per-session daemon would fragment the channel into wires that cannot see "
-            "each other's pairings, which is the opposite of a switchboard.",
-        "consequence":
-            "One process holds all pairings and the request log; its liveness is a "
-            "single fact every app and session reads from the discovery file. The cost "
-            "is a machine-wide singleton to supervise (stale discovery file after an "
-            "unclean death — hence the liveness nonce below).",
+            "The value is a channel any app can reach and any of the user's sessions can "
+            "service. So the hook that starts it is idempotent: the first session brings "
+            "the daemon up and writes a discovery file; later ones find it and do nothing.",
     },
     children=[
-        Node(id="alt-per-session-daemon", kind="alternative",
-             name="Spawn one switchboard per client session",
-             payload={"why":
-                      "Then an app paired to session A is invisible to session B, and "
-                      "the 'shared channel any app can connect to' becomes N private "
-                      "channels. Pairing state could not be reused across the user's "
-                      "own sessions — the exact thing the design wants."}),
-        Node(id="alt-per-app-daemon", kind="alternative",
-             name="Spawn one switchboard per connecting app",
-             payload={"why":
-                      "No shared broker at all, and the SessionStart hook has nothing "
-                      "to spawn (it fires before any app connects). The 'one at a time, "
-                      "with authorization' pairing model needs a single arbiter, not "
-                      "one per app."}),
+        Node(id="alt-per-session", kind="alternative",
+             name="One broker per session",
+             payload={"why": "Then a pairing in one session is invisible to another — "
+                             "N private wires, not a shared channel."}),
     ],
 )
 
@@ -76,39 +47,19 @@ _SINGLETON = Node(
 _TRANSPORT = Node(
     id="endpoint-is-loopback-tcp",
     kind="decision",
-    name="The daemon endpoint is a loopback TCP port plus a discovery file — not a Unix "
-         "socket, not a named pipe",
+    name="The endpoint is a loopback TCP port plus a discovery file",
     payload={
         "rationale":
-            "Two very different callers must reach the daemon: external apps (any "
-            "language) and the MCP server subprocess the client spawns. The endpoint "
-            "must be trivially reachable from both, on Windows first. A loopback TCP "
-            "port (127.0.0.1) is the one transport that is identical on every OS and "
-            "every language's standard library; a discovery file at a known user path "
-            "carries the live port, pid and nonce so callers find it without a fixed "
-            "port. Unix domain sockets and named pipes each need per-OS code (Windows "
-            "UDS is partial and recent; pipe APIs differ), buying locality we do not "
-            "need for a localhost broker.",
-        "consequence":
-            "Bound to 127.0.0.1 only — never a routable interface — so the channel is "
-            "local to the machine, and a payload never leaves it via the switchboard. "
-            "Access control is the discovery-file nonce plus the pairing handshake, not "
-            "filesystem permissions.",
+            "Apps in any language and the MCP server must both reach the daemon on "
+            "Windows first. Loopback TCP is identical on every OS and standard library; "
+            "a discovery file carries the ephemeral port, pid and nonce. Bound to "
+            "127.0.0.1 only, so nothing leaves the machine via the channel.",
     },
     children=[
-        Node(id="alt-unix-socket", kind="alternative",
-             name="Use a Unix domain socket at a well-known path",
-             payload={"why":
-                      "Windows is the primary platform and its UDS support is partial "
-                      "and version-gated; a socket file also re-introduces the "
-                      "filesystem-permission and stale-inode problems the discovery "
-                      "file already solves for TCP."}),
-        Node(id="alt-named-pipe", kind="alternative",
-             name="Use an OS named pipe",
-             payload={"why":
-                      "Named-pipe APIs and semantics differ between Windows and POSIX, "
-                      "so every app author would need per-OS client code to reach a "
-                      "channel whose whole point is being easy to connect to."}),
+        Node(id="alt-uds-or-pipe", kind="alternative",
+             name="Unix socket / named pipe",
+             payload={"why": "Per-OS client code for a localhost channel whose point is "
+                             "being easy to connect to; Windows UDS is partial."}),
     ],
 )
 
@@ -116,69 +67,41 @@ _TRANSPORT = Node(
 _PAIRING = Node(
     id="pairing-is-authorized-with-a-matched-code",
     kind="decision",
-    name="An app pairs once through an MCP tool the user authorizes, confirmed by a code "
-         "shown identically on both sides — never silent, never per-request",
+    name="An app pairs once, authorized by the user, confirmed by a code matched on both "
+         "sides — never silent, never per-request",
     payload={
         "rationale":
-            "Pairing is the trust act: it lets an app put requests in front of the "
-            "user's own AI client. So it happens in the client, through an MCP tool the "
-            "user must approve, and it names the app. The code shown on both the app and "
-            "the switchboard side defeats the confused-deputy case — it proves the app "
-            "the user is authorizing is the same app that opened the connection, not "
-            "another one racing for the slot. Once paired, requests flow without "
-            "re-authorizing each one: per-request prompts would make the channel useless "
-            "for anything but a single question.",
-        "consequence":
-            "One authorization per app, then a durable pairing the app presents on every "
-            "request. Compromise of a paired app is the app's problem, by the "
-            "transports-not-adjudicates line below; the switchboard's job is to prove "
-            "*which* app it is talking to, which the matched code does.",
+            "Pairing lets an app put requests in front of the user's client, so the user "
+            "approves it once and names it; the code matched on the app and the "
+            "switchboard proves it is that app, not another racing for the slot. After "
+            "that, requests flow without re-authorizing each one.",
     },
     children=[
-        Node(id="alt-silent-pairing", kind="alternative",
-             name="Auto-pair any app that connects, no authorization",
-             payload={"why":
-                      "Any process on the machine could then push requests into the "
-                      "user's client unbidden — the switchboard would be an open relay "
-                      "into the session. The user must name and approve the app once."}),
-        Node(id="alt-authorize-every-request", kind="alternative",
-             name="Prompt the user to authorize each request",
-             payload={"why":
-                      "Safe but pointless: a channel that needs a human tap per message "
-                      "carries nothing an ordinary chat turn would not. The trust "
-                      "decision belongs at pairing, made once, revocable."}),
+        Node(id="alt-silent", kind="alternative",
+             name="Auto-pair any app that connects",
+             payload={"why": "Any process could push requests into the user's client "
+                             "unbidden — an open relay into the session."}),
     ],
 )
 
 
-_TRANSPORTS_NOT_ADJUDICATES = Node(
+_NEUTRAL = Node(
     id="the-channel-transports-it-does-not-adjudicate",
     kind="decision",
     name="The switchboard transports payloads faithfully and records what it carried; it "
-         "does not judge, filter, or vouch for what an app sends",
+         "does not judge what an app sends",
     payload={
         "rationale":
-            "Content provenance, trust, and consent over *what* an app sends are the "
-            "app's responsibility, not the channel's. A switchboard that adjudicated "
-            "payloads would become a policy engine every app must model around, and "
-            "would implicitly vouch for content it cannot understand. Its integrity "
-            "claim is narrow and keepable: it moved the bytes unchanged and kept a "
-            "record of doing so. That record — write-ahead, below — is the estate's "
-            "evidence-before-claim doctrine applied to a wire.",
-        "consequence":
-            "The trust boundary is the pairing (which app) plus the record (what "
-            "crossed), never a verdict on the payload. An app that sends something "
-            "harmful is accountable for it; the switchboard can show faithfully what it "
-            "relayed, which is exactly what a neutral channel should be able to do.",
+            "Provenance and consent over what an app sends are the app's concern. A "
+            "channel that screened payloads would vouch for content it cannot understand "
+            "and force every app around its policy. Its promise is narrow and keepable: "
+            "it moved the bytes unchanged and kept the record.",
     },
     children=[
-        Node(id="alt-vet-payloads", kind="alternative",
-             name="Have the switchboard screen or classify payloads before relaying",
-             payload={"why":
-                      "Turns a neutral channel into an interested party that vouches "
-                      "for content, and forces every app to model the channel's policy. "
-                      "Screening is an app-level or client-level concern; the wire's "
-                      "only promise is faithful carriage and an honest record."}),
+        Node(id="alt-screen", kind="alternative",
+             name="Screen or classify payloads before relaying",
+             payload={"why": "Turns a neutral wire into an interested party; screening "
+                             "is an app or client concern."}),
     ],
 )
 
@@ -186,159 +109,42 @@ _TRANSPORTS_NOT_ADJUDICATES = Node(
 _WRITE_AHEAD = Node(
     id="write-ahead-before-send",
     kind="decision",
-    name="A request is recorded (write-ahead) before it is dispatched to the client — "
-         "never after the result returns",
+    name="A request is recorded before it is dispatched, never after the result returns",
     payload={
         "rationale":
-            "The estate's founding move is evidence before the claim. A request log "
-            "written only on completion loses exactly the requests that matter most — "
-            "the ones in flight when the switchboard or the client dies. Writing ahead "
-            "means every request that was ever accepted leaves a durable mark before it "
-            "can be lost, so a crash is reconstructable from the log rather than "
-            "re-derived by guesswork (the flight-recorder discipline, one layer up).",
-        "consequence":
-            "The log may hold requests that never got a result (in-flight at death) — "
-            "which is the point: an unanswered request is a fact worth keeping, not an "
-            "omission. Result and status are appended as they resolve.",
+            "Evidence before the claim. A log written only on completion loses the "
+            "requests in flight when something dies — the ones that matter most. Writing "
+            "ahead means every accepted request leaves a durable mark before it can be "
+            "lost.",
     },
     children=[
-        Node(id="alt-record-on-completion", kind="alternative",
-             name="Record a request only once its result is known",
-             payload={"why":
-                      "Loses every in-flight request on a crash — the precise failures "
-                      "an audit trail exists to explain. A record that forgets what was "
-                      "attempted cannot answer 'what happened' when it matters."}),
+        Node(id="alt-on-completion", kind="alternative",
+             name="Record only once the result is known",
+             payload={"why": "Loses every in-flight request on a crash — the failures an "
+                             "audit trail exists to explain."}),
     ],
 )
 
 
-_CLIENT_IS_LIVE = Node(
-    id="the-client-is-a-live-session-not-a-headless-pump",
+_EXISTING_SESSION = Node(
+    id="services-in-the-users-existing-session",
     kind="decision",
-    name="The AI client is a live, user-attended session — the one that spawned the app, "
-         "or one the user pairs it with — not a headless pump the daemon owns; a request "
-         "that arrives while the client is idle simply starts a turn carrying it",
+    name="Requests are serviced in the user's existing client session, reached only "
+         "through MCP and hooks — switchboard is client-agnostic and spawns nothing",
     payload={
         "rationale":
-            "The point is a three-party interaction: the user steers the app from its own "
-            "UI and from the client, and the app offloads work to that live client. A "
-            "headless pump the daemon owned would be a second, unattended agent — a "
-            "different product. So the servicing session is the user's own. When it is "
-            "idle, an app request starts a turn (the request is the turn's content; the "
-            "user typed nothing — that, and only that, is what 'no extra user turn' "
-            "means); when it is mid-turn, the request is injected into the active turn. "
-            "The idle path is the ordinary stream-json user-message path; the active path "
-            "carries the transcript caveat below.",
-        "consequence":
-            "Servicing rides Claude Code's stream-json turn injection, which is "
-            "undocumented for a running session (issue #24594; hence the repo's "
-            "experimental mark) and may change; if it does, the return path and the "
-            "record still stand and only the delivery of the turn needs rework. The "
-            "servicer (switchboard/servicer.py) realizes this: a persistent stream-json "
-            "session it drives, injecting a turn when the daemon reports queued work — "
-            "proven with multiple requests answered over one session that kept context "
-            "between them. No claim is made that a request is serviced without *any* turn "
-            "— only without one the human has to start.",
+            "The point is a three-party interaction: the user steers the app from its UI "
+            "and from the client, and the app offloads to the session the user is already "
+            "in. So switchboard is an MCP surface (pairing plus the take/deliver return "
+            "path) and a hook, nothing more. It launches no client, drives no session, "
+            "and knows nothing of any specific one — a request reaching the app is "
+            "serviced by whatever session the user has open.",
     },
     children=[
-        Node(id="alt-headless-pump", kind="alternative",
-             name="Own a headless -p one-shot the daemon pumps each request into",
-             payload={"why":
-                      "A `-p` one-shot is a fresh unattended agent per request — no "
-                      "persistence, no shared context, and a stand-in for the user's "
-                      "session rather than it. The live persistent session keeps context "
-                      "across requests, which is what 'the app uses the client' needs."}),
-    ],
-)
-
-
-_SERVICER_OWN_SESSION = Node(
-    id="the-servicer-launches-its-own-session",
-    kind="debt",
-    name="v0's servicer launches its own live Claude Code session and drives it; it does "
-         "not yet attach to a session the user already has open",
-    payload={
-        "note":
-            "The design's fullest form connects the app to the client that spawned it, or "
-            "one the user pairs with — the user's OWN attended session. v0 realizes "
-            "'auto-inject a servicing turn into a live session from the daemon' with a "
-            "session the servicer launches: persistent stream-json, context kept across "
-            "requests (not a -p one-shot), which is the mechanism proven end to end. "
-            "Attaching to a session the user is already sitting in is the next step and "
-            "the harder half — it needs a handle onto that session's input the daemon does "
-            "not have today.",
-    },
-    children=[
-        Node(id="discharge-attach-to-the-users-session", kind="discharge",
-             payload={
-                 "condition":
-                     "The servicer injects into a Claude Code session the user already "
-                     "has open and is attending — the spawning client, or one paired "
-                     "explicitly — rather than launching its own, with how that session's "
-                     "input is reached (a stdin handle, or a client facility) journaled "
-                     "here.",
-             }),
-    ],
-)
-
-
-_TRANSCRIPT_GAP = Node(
-    id="mid-turn-requests-are-not-persisted",
-    kind="debt",
-    name="A request injected mid-turn influences that turn but is not written to session "
-         "history, so it is lost on --resume — a known Claude Code gap the channel "
-         "inherits",
-    payload={
-        "note":
-            "Claude Code issue #41230 (closed not-planned): messages fed to a session "
-            "during an active turn are processed in memory but never land in the "
-            "conversation JSONL, so a --resume replays a history that omits them; "
-            "long turns also block the queue and can drop pending messages on disconnect "
-            "(#73118). The switchboard cannot fix the client, but it must not pretend "
-            "the gap away: it prefers between-turns delivery for anything that must "
-            "survive a resume, and its own write-ahead log keeps the request even when "
-            "the client's transcript does not.",
-    },
-    children=[
-        Node(id="discharge-when-persistence-or-mirroring-lands", kind="discharge",
-             payload={
-                 "condition":
-                     "Either Claude Code persists mid-turn injected messages (#41230 "
-                     "reopened and fixed) and the switchboard delivers mid-turn freely; "
-                     "or the switchboard mirrors each serviced request into the session "
-                     "history itself (via a between-turns follow-up or a transcript "
-                     "write) so no serviced request is absent on --resume — whichever "
-                     "lands first, with the mechanism journaled here.",
-             }),
-    ],
-)
-
-
-_DAEMON_UNRECORDED = Node(
-    id="only-the-mcp-surface-is-recorded-in-v0",
-    kind="debt",
-    name="v0 records the MCP surface (the tool calls) with flight-recorder, but not the "
-         "daemon's own socket and client-stream I/O — the channel's most interesting "
-         "boundary is declared, not yet taped",
-    payload={
-        "note":
-            "boundary.py names the full nondeterminism boundary — the app socket, the "
-            "client stream, the clock, the pairing randomness, process spawning — but "
-            "install_mcp only wraps the MCP server process, which is a different process "
-            "from the daemon. So in v0 a session's tool calls replay, but the daemon's "
-            "accept/relay path does not. This is the spec-studio pattern (record the "
-            "surface first, refine inward) applied here, recorded honestly rather than "
-            "left implicit.",
-    },
-    children=[
-        Node(id="discharge-record-the-daemon-boundary", kind="discharge",
-             payload={
-                 "condition":
-                     "The daemon process records its own boundary — socket accepts, "
-                     "request frames, the client stream read/write, the clock and the "
-                     "code randomness — as its own flight chain, so a whole channel "
-                     "session (app in, client out) replays end to end, not just the "
-                     "tool calls.",
-             }),
+        Node(id="alt-spawn-a-client", kind="alternative",
+             name="Spawn and drive a client the daemon owns",
+             payload={"why": "A second agent bound to one vendor, not the user's session "
+                             "— it breaks the three-party interaction and ties the "
+                             "channel to a single client."}),
     ],
 )
