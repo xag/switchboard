@@ -14,7 +14,9 @@ dependencies = ["mcp>=1.28", "flight-recorder"]
 # The design ledger — the channel's own decisions as data a rule can go red on.
 #     uv run --group ledger python -m ledger.check
 ledger = ["quern"]
-dev = ["pytest>=8"]
+# uvicorn stands the embeddable channel's ASGI surface up on a real loopback port so the
+# embed test drives it with a real MCP client — a hosted app brings its own ASGI server.
+dev = ["pytest>=8", "uvicorn>=0.30"]
 
 [tool.uv.sources]
 # Pinned by rev, always — the estate's fork-or-republish doctrine over resolver algebra.

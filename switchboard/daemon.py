@@ -1,10 +1,11 @@
-"""The switchboard daemon: one shared broker, holding pairings and the request queue.
+"""The loopback-TCP daemon: the broker core wrapped for same-machine apps.
 
-Asyncio TCP server on 127.0.0.1, ephemeral port published to the discovery file. Three
-parties meet here: apps (`pair_request`, `ask`, `await_result`), the user authorizing in
-the client (`pending_pairings`, `authorize`, `deny`), and the client servicing requests
-(`take`, `deliver`). The daemon never inspects a payload — it routes and records (the
-ledger's transports-not-adjudicates and write-ahead lines).
+One shared broker per user, reached over 127.0.0.1. The state machine lives in
+`core.Switchboard`; this module is only its transport — an asyncio TCP server that reads one
+JSON frame, dispatches it to the core, and writes one back. Three parties meet on the wire:
+apps (`pair_request`, `ask`, `await_result`), the user authorizing in the client
+(`pending_pairings`, `authorize`, `deny`), and the client servicing requests (`take`,
+`deliver`).
 
 Run blocking with `python -m switchboard daemon`; the SessionStart hook spawns that
 detached. `ensure_running()` is the idempotent front door: it returns the live endpoint,
@@ -16,217 +17,16 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import secrets
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-from . import __version__, discovery, wal
-from .protocol import Endpoint, V
+from . import __version__, discovery
+from .core import PAIR_TTL, Pending, Req, Switchboard  # re-exported for callers and tests
 
-# Pairing codes expire if left unauthorized this long — a stale pending pairing should not
-# linger as an authorizable slot.
-PAIR_TTL = 300.0
-
-
-@dataclass
-class Pending:
-    pairing_id: str
-    app: str
-    code: str
-    created: float
-    status: str = "pending"  # pending | authorized | denied
-    token: Optional[str] = None
-
-
-@dataclass
-class Req:
-    request_id: str
-    app: str
-    request: Any
-    status: str = "queued"  # queued | taken | done
-    result: Any = None
-    fut: Optional[asyncio.Future] = None
-
-
-class Switchboard:
-    def __init__(self) -> None:
-        self.nonce = secrets.token_hex(8)
-        self.pending: dict[str, Pending] = {}     # pairing_id -> Pending (and authorized)
-        self.by_token: dict[str, Pending] = {}    # token -> Pending
-        self.reqs: dict[str, Req] = {}            # request_id -> Req
-        self.inbox: "asyncio.Queue[str]" = asyncio.Queue()
-        self._rn = 0
-        self._pn = 0
-
-    # -- id minting (deterministic per lifetime; readable in the WAL) ---------------
-
-    def _next_request_id(self) -> str:
-        self._rn += 1
-        return f"r{self._rn}"
-
-    def _next_pairing_id(self) -> str:
-        self._pn += 1
-        return f"p{self._pn}"
-
-    # -- pairing --------------------------------------------------------------------
-
-    def _open_pairing(self, app: str) -> Pending:
-        """Idempotent while pending: an app re-requesting keeps its code and slot."""
-        for p in self.pending.values():
-            if p.app == app and p.status == "pending" \
-                    and time.time() - p.created < PAIR_TTL:
-                return p
-        p = Pending(self._next_pairing_id(), app, f"{secrets.randbelow(1_000_000):06d}",
-                    time.time())
-        self.pending[p.pairing_id] = p
-        wal.append({"ts": time.time(), "event": "pair_request",
-                    "pairing_id": p.pairing_id, "app": app})
-        return p
-
-    def pair_request(self, msg: dict) -> dict:
-        app = (msg.get("app") or "").strip()
-        if not app:
-            return {"ok": False, "error": "an app must name itself to pair"}
-        p = self._open_pairing(app)
-        return {"ok": True, "pairing_id": p.pairing_id, "code": p.code}
-
-    def pending_pairings(self) -> dict:
-        now = time.time()
-        out = [{"pairing_id": p.pairing_id, "app": p.app, "code": p.code}
-               for p in self.pending.values()
-               if p.status == "pending" and now - p.created < PAIR_TTL]
-        return {"ok": True, "pairings": out}
-
-    def pair_status(self, msg: dict) -> dict:
-        p = self.pending.get(msg.get("pairing_id", ""))
-        if not p:
-            return {"ok": False, "error": "no such pairing"}
-        return {"ok": True, "status": p.status,
-                **({"token": p.token} if p.status == "authorized" else {})}
-
-    def authorize(self, msg: dict) -> dict:
-        """The user's act, relayed by the MCP tool. The code matched on both sides is the
-        mechanical guard: authorizing a pairing_id with a code that is not its own is
-        refused, so a mix-up between two pending pairings cannot cross the wires."""
-        p = self.pending.get(msg.get("pairing_id", ""))
-        if not p:
-            return {"ok": False, "error": "no such pairing"}
-        if p.status != "pending":
-            return {"ok": False, "error": f"pairing already {p.status}"}
-        if str(msg.get("code", "")) != p.code:
-            return {"ok": False, "error": "code mismatch - the app shown is not this one"}
-        p.status = "authorized"
-        p.token = secrets.token_urlsafe(24)
-        self.by_token[p.token] = p
-        wal.append({"ts": time.time(), "event": "authorize",
-                    "pairing_id": p.pairing_id, "app": p.app})
-        return {"ok": True, "token": p.token, "app": p.app}
-
-    def deny(self, msg: dict) -> dict:
-        p = self.pending.get(msg.get("pairing_id", ""))
-        if not p:
-            return {"ok": False, "error": "no such pairing"}
-        p.status = "denied"
-        wal.append({"ts": time.time(), "event": "deny",
-                    "pairing_id": p.pairing_id, "app": p.app})
-        return {"ok": True}
-
-    # -- requests -------------------------------------------------------------------
-
-    def ask(self, msg: dict) -> dict:
-        """An app's request. Without a valid token the first request patches through to a
-        pairing: the app gets a code to show and awaits authorization, then retries."""
-        token = msg.get("token")
-        p = self.by_token.get(token) if token else None
-        if p is None:
-            app = (msg.get("app") or "").strip()
-            if not app:
-                return {"ok": False, "error": "unpaired, and no app name to pair with"}
-            opened = self._open_pairing(app)
-            return {"ok": False, "status": "unpaired",
-                    "pairing_id": opened.pairing_id, "code": opened.code}
-        rid = self._next_request_id()
-        req = Req(rid, p.app, msg.get("request"))
-        # Write-ahead: the request is durable before it is queued to be serviced.
-        wal.append({"ts": time.time(), "event": "request", "request_id": rid,
-                    "app": p.app, "request": req.request})
-        req.fut = asyncio.get_running_loop().create_future()
-        self.reqs[rid] = req
-        self.inbox.put_nowait(rid)
-        return {"ok": True, "request_id": rid}
-
-    async def await_result(self, msg: dict) -> dict:
-        rid = msg.get("request_id", "")
-        req = self.reqs.get(rid)
-        if not req:
-            return {"ok": False, "error": "no such request"}
-        if req.status == "done":
-            return {"ok": True, "status": "done", "result": req.result}
-        wait = float(msg.get("wait", 60.0))
-        try:
-            await asyncio.wait_for(asyncio.shield(req.fut), timeout=wait)
-        except asyncio.TimeoutError:
-            return {"ok": True, "status": req.status}
-        return {"ok": True, "status": "done", "result": req.result}
-
-    async def take(self, msg: dict) -> dict:
-        """The client servicing side pulls the next queued request. Long-poll: waits up to
-        `wait` seconds for one to arrive, so an idle session can hold the line open."""
-        wait = float(msg.get("wait", 25.0))
-        try:
-            rid = self.inbox.get_nowait() if not self.inbox.empty() \
-                else await asyncio.wait_for(self.inbox.get(), timeout=wait)
-        except asyncio.TimeoutError:
-            return {"ok": True, "empty": True}
-        req = self.reqs.get(rid)
-        if not req:
-            return {"ok": True, "empty": True}
-        req.status = "taken"
-        return {"ok": True, "request_id": rid, "app": req.app, "request": req.request}
-
-    def deliver(self, msg: dict) -> dict:
-        rid = msg.get("request_id", "")
-        req = self.reqs.get(rid)
-        if not req:
-            return {"ok": False, "error": "no such request"}
-        req.result = msg.get("result")
-        req.status = "done"
-        wal.append({"ts": time.time(), "event": "result", "request_id": rid,
-                    "result": req.result})
-        if req.fut and not req.fut.done():
-            req.fut.set_result(req.result)
-        return {"ok": True}
-
-    # -- dispatch -------------------------------------------------------------------
-
-    async def dispatch(self, msg: dict) -> dict:
-        verb = msg.get("verb")
-        if verb == V.PING:
-            return {"ok": True, "nonce": self.nonce, "pid": os.getpid(),
-                    "version": __version__}
-        if verb == V.PAIR_REQUEST:
-            return self.pair_request(msg)
-        if verb == V.PENDING_PAIRINGS:
-            return self.pending_pairings()
-        if verb == V.PAIR_STATUS:
-            return self.pair_status(msg)
-        if verb == V.AUTHORIZE:
-            return self.authorize(msg)
-        if verb == V.DENY:
-            return self.deny(msg)
-        if verb == V.ASK:
-            return self.ask(msg)
-        if verb == V.AWAIT_RESULT:
-            return await self.await_result(msg)
-        if verb == V.TAKE:
-            return await self.take(msg)
-        if verb == V.DELIVER:
-            return self.deliver(msg)
-        return {"ok": False, "error": f"unknown verb {verb!r}"}
+__all__ = ["Switchboard", "Pending", "Req", "PAIR_TTL", "run", "spawn", "ensure_running"]
 
 
 # -- the server ---------------------------------------------------------------------

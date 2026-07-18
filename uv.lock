@@ -765,6 +765,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
+    { name = "uvicorn" },
 ]
 ledger = [
     { name = "quern" },
@@ -777,7 +778,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8" }]
+dev = [
+    { name = "pytest", specifier = ">=8" },
+    { name = "uvicorn", specifier = ">=0.30" },
+]
 ledger = [{ name = "quern", git = "https://github.com/xag/quern?rev=4d04c0b" }]
 
 [[package]]

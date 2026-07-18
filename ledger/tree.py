@@ -21,7 +21,7 @@ def build() -> Quern:
     quern = Quern(packages=[next(r for r in refs if r.name == "ledger")])
     quern = lib.effective(quern)
     quern.root.children = [_SINGLETON, _TRANSPORT, _PAIRING, _NEUTRAL, _WRITE_AHEAD,
-                           _EXISTING_SESSION]
+                           _EXISTING_SESSION, _CORE_IS_TRANSPORT_FREE, _EMBED_SELF_HOSTS]
     return quern
 
 
@@ -146,5 +146,53 @@ _EXISTING_SESSION = Node(
              payload={"why": "A second agent bound to one vendor, not the user's session "
                              "— it breaks the three-party interaction and ties the "
                              "channel to a single client."}),
+    ],
+)
+
+
+_CORE_IS_TRANSPORT_FREE = Node(
+    id="broker-core-is-transport-free",
+    kind="decision",
+    name="The broker core is one transport-free state machine; each deployment is a thin "
+         "shell around the same instance",
+    payload={
+        "rationale":
+            "Pairing, the take/deliver return path, write-ahead and liveness are the value; "
+            "the wire that carries them is not. Keeping them in `core.Switchboard` — "
+            "dict-in / dict-out verbs, no socket — lets the loopback daemon and the "
+            "embeddable library reuse the identical verbs and logic, so a second deployment "
+            "is a shell, not a fork that drifts. The five user-side MCP tools are likewise "
+            "defined once and bound to either transport's handlers.",
+    },
+    children=[
+        Node(id="alt-reimplement-per-transport", kind="alternative",
+             name="Reimplement the broker for each transport",
+             payload={"why": "Two copies of pairing and the return path drift apart; a fix "
+                             "or a guard lands in one and not the other. The issue asked to "
+                             "factor the core out precisely to avoid that."}),
+    ],
+)
+
+
+_EMBED_SELF_HOSTS = Node(
+    id="a-hosted-app-self-hosts-its-channel",
+    kind="decision",
+    name="A hosted app embeds the broker and exposes the surface over remote MCP itself — "
+         "no central relay we run",
+    payload={
+        "rationale":
+            "The loopback daemon only reaches same-machine apps. A hosted app instead holds "
+            "a `Channel` in its own process: it reaches the core in-process (`ask`), and "
+            "serves the user-side tools over streamable-HTTP for the user's client to add as "
+            "a connector. app->client is direct, consent is the user adding the connector "
+            "plus the unchanged pairing handshake, and there is nothing for us to operate or "
+            "be trusted with.",
+    },
+    children=[
+        Node(id="alt-hosted-relay", kind="alternative",
+             name="A relay we host in the middle",
+             payload={"why": "Puts us in the path of every request as an operator and a "
+                             "trusted party; embedding keeps the channel the app's own. "
+                             "Revisit only for an app that genuinely cannot self-host."}),
     ],
 )
