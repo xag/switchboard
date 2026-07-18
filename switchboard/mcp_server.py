@@ -1,10 +1,10 @@
-"""The MCP surface the client mounts: the user's side of the switchboard.
+"""The MCP surface the local client mounts: the user's side of the loopback daemon.
 
-Tools the user's own session calls: authorize an app that wants to pair
-(`switchboard_pairings`, `switchboard_authorize`), and service the requests a paired app
-sends (`switchboard_take` to pull the next, `switchboard_deliver` to return the result). An
-MCP tool is an ordinary subprocess, so it reaches the daemon over the same loopback wire an
-app uses. When the session calls them is the client's concern, not switchboard's.
+The five user-side tools are defined once in `_tools`; here they are bound to handlers that
+reach the shared daemon over the same loopback wire an app uses (an MCP tool is an ordinary
+subprocess, so it dials 127.0.0.1 like anything else). The embeddable deployment binds the
+identical tools to the in-process core instead — see `embed.py`. When the session calls them
+is the client's concern, not switchboard's.
 
 flight-recorder wraps every tool call, so a session's pairings and deliveries land on tapes
 under ~/.switchboard/flight.
@@ -17,7 +17,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from . import daemon, discovery, protocol
+from . import _tools, daemon, discovery, protocol
 from .protocol import V
 
 
@@ -29,37 +29,27 @@ def _endpoint() -> protocol.Endpoint:
     return discovery.endpoint_of(info)
 
 
-def register(mcp: FastMCP) -> None:
+class _WireHandlers:
+    """The user-side verbs, each a single frame to the daemon over loopback TCP."""
 
-    @mcp.tool(structured_output=True)
-    def switchboard_pairings() -> dict[str, Any]:
-        """Apps waiting to pair with this session's channel. Each shows a code; before you
-        authorize, confirm the code here matches the one the app is showing the user."""
+    def pairings(self) -> dict[str, Any]:
         return protocol.call(_endpoint(), V.PENDING_PAIRINGS)
 
-    @mcp.tool(structured_output=True)
-    def switchboard_authorize(pairing_id: str, code: str) -> dict[str, Any]:
-        """Admit an app to the channel. Pass the pairing_id and the code the app is
-        showing; a code that does not match the switchboard's is refused, so you cannot
-        authorize the wrong app by mistake. After this the app may send requests."""
+    def authorize(self, pairing_id: str, code: str) -> dict[str, Any]:
         return protocol.call(_endpoint(), V.AUTHORIZE, pairing_id=pairing_id, code=code)
 
-    @mcp.tool(structured_output=True)
-    def switchboard_deny(pairing_id: str) -> dict[str, Any]:
-        """Decline a pairing request."""
+    def deny(self, pairing_id: str) -> dict[str, Any]:
         return protocol.call(_endpoint(), V.DENY, pairing_id=pairing_id)
 
-    @mcp.tool(structured_output=True)
-    def switchboard_take() -> dict[str, Any]:
-        """Pull the next request a paired app has sent, to service it. Returns the app,
-        the request_id, and the request payload — or {empty: true} if none is waiting.
-        Answer it, then return the result with switchboard_deliver(request_id, result)."""
+    def take(self) -> dict[str, Any]:
         return protocol.call(_endpoint(), V.TAKE, wait=0)
 
-    @mcp.tool(structured_output=True)
-    def switchboard_deliver(request_id: str, result: Any) -> dict[str, Any]:
-        """Return a result for a request you took. This unblocks the waiting app."""
+    def deliver(self, request_id: str, result: Any) -> dict[str, Any]:
         return protocol.call(_endpoint(), V.DELIVER, request_id=request_id, result=result)
+
+
+def register(mcp: FastMCP) -> None:
+    _tools.register(mcp, _WireHandlers())
 
 
 def build_server() -> FastMCP:
