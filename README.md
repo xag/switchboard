@@ -10,9 +10,10 @@ client, and the app offloads work to that live client. The switchboard is the br
 the middle. It carries payloads faithfully and keeps a record of what crossed; it does not
 judge what an app sends.
 
-> Experimental because the "service a request with no extra user turn" step leans on
-> undocumented Claude Code stream-json behavior that may change without notice. The parts
-> that don't — pairing, liveness, the write-ahead record, the return-path tools — are
+> "No extra user turn" means the user lifts no finger: a request arriving while the client
+> is idle simply starts a turn carrying it. That servicing step leans on undocumented Claude
+> Code stream-json turn injection, which may change without notice — hence experimental. The
+> parts that don't — pairing, liveness, the write-ahead record, the return-path tools — are
 > solid and tested.
 
 ## The shape
@@ -82,11 +83,13 @@ liveness, write-ahead recording of every request before dispatch, and `ask(reque
 result` end to end — verified against a real Claude Code stream-json turn calling the
 return-path tools.
 
-**Doesn't yet:** service a request inside an *attended* session with no user-initiated
-turn (the injection question — the open bet, tracked in the ledger); mirror mid-turn
-requests into session history, so they are lossy on `--resume` (Claude Code #41230); record
-the daemon's own socket/stream boundary (only the MCP surface is taped in v0). The design
-ledger names each of these as a hypothesis or debt with the condition that discharges it.
+**Doesn't yet:** auto-inject the servicing turn into a live session from the daemon — v0
+proves servicing with a real Claude Code stream-json turn calling the return-path tools,
+but wiring the daemon to start that turn on the idle session is left to build; mirror
+mid-turn requests into session history, so they are lossy on `--resume` (Claude Code
+#41230); record the daemon's own socket/stream boundary (only the MCP surface is taped in
+v0). The design ledger names the mid-turn gap and the recording gap as debts with the
+condition that discharges each.
 
 ## The record
 

@@ -213,50 +213,37 @@ _WRITE_AHEAD = Node(
 
 _CLIENT_IS_LIVE = Node(
     id="the-client-is-a-live-session-not-a-headless-pump",
-    kind="hypothesis",
-    name="An app request can be serviced by a live, user-attended AI-client session — "
-         "the one that spawned the app, or one the user pairs it with — without the user "
-         "having to type the request as a turn",
+    kind="decision",
+    name="The AI client is a live, user-attended session — the one that spawned the app, "
+         "or one the user pairs it with — not a headless pump the daemon owns; a request "
+         "that arrives while the client is idle simply starts a turn carrying it",
     payload={
-        "held_because":
-            "The goal is a three-party interaction: the user steers the app from its own "
-            "UI and from the client, and the app offloads work to that live client. This "
-            "rules out a headless pump the daemon owns — that would be a second, "
-            "unattended agent, not the user's session. The mechanism the design bets on "
-            "is Claude Code's stream-json turn injection: the switchboard writes the "
-            "app's request into the session as a turn the user did not type, serviced "
-            "between the user's own turns (idle) or during one (active), with the result "
-            "captured on the return path (an MCP tool the client calls) and routed back "
-            "to the app.",
-        "consequence_if_wrong":
-            "If no supported stream-json path lets an app request reach an *attended* "
-            "session without a user-initiated turn, v0's live servicing is unachievable "
-            "on current Claude Code, and the channel degrades to a recorded request "
-            "queue a human drains by hand — useful, but not the switchboard.",
-        "note":
-            "This is the experimental core and the reason the repo is marked "
-            "experimental: it rests on undocumented Claude Code behavior (stream-json "
-            "input is documented only for headless -p mode; issue #24594) that may "
-            "change without notice. The pairing, liveness, write-ahead, and return-path "
-            "plumbing do not depend on it and are built regardless.",
+        "rationale":
+            "The point is a three-party interaction: the user steers the app from its own "
+            "UI and from the client, and the app offloads work to that live client. A "
+            "headless pump the daemon owned would be a second, unattended agent — a "
+            "different product. So the servicing session is the user's own. When it is "
+            "idle, an app request starts a turn (the request is the turn's content; the "
+            "user typed nothing — that, and only that, is what 'no extra user turn' "
+            "means); when it is mid-turn, the request is injected into the active turn. "
+            "The idle path is the ordinary stream-json user-message path; the active path "
+            "carries the transcript caveat below.",
+        "consequence":
+            "Servicing rides Claude Code's stream-json turn injection, which is "
+            "undocumented for a running session (issue #24594; hence the repo's "
+            "experimental mark) and may change; if it does, the return path and the "
+            "record still stand and only the delivery of the turn needs rework. No claim "
+            "is made that a request is serviced without *any* turn — only without one the "
+            "human has to start.",
     },
     children=[
-        Node(id="no-supported-inject-into-an-attended-session", kind="falsification",
-             payload={
-                 "claim":
-                     "There is no Claude Code facility — documented or stable enough to "
-                     "depend on — by which an external process makes an attended session "
-                     "take a turn on injected content without the user initiating it. "
-                     "Not 'it is undocumented'; not 'mid-turn injects are lossy': that "
-                     "the attended-session injection cannot be made to work at all.",
-                 "cadence": "at the first end-to-end servicing spike, and at every "
-                            "Claude Code release that touches stream-json or hooks",
-                 "discharge_route":
-                     "Retreat v0 to the recorded-queue shape (pairing + WAL + a "
-                     "poll/deliver tool a human triggers), keep the plumbing, and reprice "
-                     "'no extra user turn' as a goal awaiting a client facility that "
-                     "supports it.",
-             }),
+        Node(id="alt-headless-pump", kind="alternative",
+             name="Own a headless claude the daemon pumps requests into",
+             payload={"why":
+                      "That is a second unattended agent, not the user's session — it "
+                      "breaks the three-party interaction where the user steers from both "
+                      "the app and the client. The channel's value is reaching the live "
+                      "session, not standing up another one."}),
     ],
 )
 
