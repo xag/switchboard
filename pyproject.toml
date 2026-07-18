@@ -1,7 +1,7 @@
 [project]
 name = "switchboard"
 version = "0.0.1"
-description = "A shared local channel that connects an app to a live AI-client session: the app sends requests, the user's client services them, results come back — no extra user turn, one app paired at a time."
+description = "A channel for an app to borrow the user's live AI-client session: the app sends a request, the session services it, the result comes back — every request recorded, one app paired at a time. Local daemon or embedded in a hosted app."
 readme = "README.md"
 requires-python = ">=3.11"
 # The channel's two runtime faces. `mcp` is the surface the client mounts (the pairing

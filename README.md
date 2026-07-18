@@ -1,10 +1,11 @@
 # switchboard
 
-**[Experimental]** A channel that connects an app to the user's live client session. The app
-sends a request; the session the user is already in services it; the result comes back — one
-app paired at a time, every request recorded before it is sent. It runs two ways: a shared
-local daemon for same-machine apps, or embedded in a hosted app that self-hosts its own
-channel over remote MCP.
+**[Experimental]** A channel for an app to borrow the user's live client session. The app
+sends a request; the session the user is already in services it — reasoning, using its own
+tools and context, not just completing a prompt — and the result comes back. One app paired
+at a time, every request recorded before it is serviced. It runs two ways: a shared local
+daemon for same-machine apps, or embedded in a hosted app that self-hosts its own channel
+over remote MCP.
 
 Three parties: the user steers the app from its own UI and from the client, and the app
 offloads work to that client. switchboard is the broker between them. It is client-agnostic
@@ -76,7 +77,12 @@ async def handle():
         show_the_user(np.code)   # the user matches it in their client to authorize once
 ```
 
-It is the same broker core and the same five tools as the daemon — only the two faces differ:
+An app that already serves its own MCP surface can skip the separate mount and put the five
+tools straight on it with `channel.register_on(mcp)` — then the client that spawned the app
+services requests over the same connection, no second connector. This is the shape that
+replaces MCP sampling on the app's own surface.
+
+It is the same broker core and the same five tools as the daemon — only the faces differ:
 the app reaches the core in-process (`ask`), the user's client reaches it over the network.
 Still write-ahead, still transports-not-adjudicates.
 
