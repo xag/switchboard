@@ -36,6 +36,10 @@ def main(argv: list[str]) -> int:
         from .mcp_server import serve
         return serve()
 
+    if cmd == "servicer":
+        from .servicer import serve
+        return serve()
+
     if cmd == "status":
         from . import discovery
         info = discovery.alive()

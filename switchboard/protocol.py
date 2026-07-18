@@ -30,6 +30,7 @@ class V:
     AWAIT_RESULT = "await_result"       # {request_id} (long-poll) -> {ok, status, result?}
     TAKE = "take"                       # {} (long-poll) -> {ok, request_id, app, request} | {ok, empty:true}
     DELIVER = "deliver"                 # {request_id, result} -> {ok}
+    WAIT_PENDING = "wait_pending"       # {} (long-poll) -> {ok, pending:N}  (peek, does not take)
 
 
 Endpoint = tuple[str, int]

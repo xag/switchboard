@@ -26,7 +26,9 @@ judge what an app sends.
   both sides confirms it is the right app. After that, requests flow without re-asking.
 - **The client services requests** by calling the switchboard's MCP tools — the return
   path. `switchboard_take` pulls the next request; the client answers; `switchboard_deliver`
-  sends the result back to the waiting app.
+  sends the result back to the waiting app. A live session does this on its own:
+  `python -m switchboard servicer` runs a persistent Claude Code session the daemon drives,
+  auto-injecting a servicing turn whenever a request is queued — the user lifts no finger.
 - **Liveness is a fact, not a guess.** If the daemon dies, an app sees itself go `stale`
   rather than hang on a dead channel.
 
@@ -62,7 +64,15 @@ The hook spawns the shared daemon detached and exits; a second session finds it 
 Now the client has `switchboard_pairings`, `switchboard_authorize`, `switchboard_take`,
 `switchboard_deliver`.
 
-**3. From an app**, reach the channel with the client library:
+**3. Run a servicing session** — this is the point. It launches a live, persistent Claude
+Code session that services queued requests automatically, by injecting a turn when work
+arrives:
+
+```bash
+uv run python -m switchboard servicer
+```
+
+**4. From an app**, reach the channel with the client library:
 
 ```python
 from switchboard.client import App
@@ -80,16 +90,17 @@ or drive it by hand — `app.begin_pairing()` → show the code → `app.await_p
 
 **Does:** pairing with a both-sides code match, one shared broker with idempotent spawn and
 liveness, write-ahead recording of every request before dispatch, and `ask(request) →
-result` end to end — verified against a real Claude Code stream-json turn calling the
-return-path tools.
+result` end to end — the daemon **auto-injects a servicing turn into a live, persistent
+stream-json session** (the servicer), so a queued request is serviced with no user
+finger-lift. Verified with two requests answered over one live session, the session keeping
+context between them (persistent, not a `-p` one-shot).
 
-**Doesn't yet:** auto-inject the servicing turn into a live session from the daemon — v0
-proves servicing with a real Claude Code stream-json turn calling the return-path tools,
-but wiring the daemon to start that turn on the idle session is left to build; mirror
-mid-turn requests into session history, so they are lossy on `--resume` (Claude Code
-#41230); record the daemon's own socket/stream boundary (only the MCP surface is taped in
-v0). The design ledger names the mid-turn gap and the recording gap as debts with the
-condition that discharges each.
+**Doesn't yet:** point the servicer at the user's *own* already-running interactive session
+— v0's servicer is a live session the daemon launches, which is the mechanism; attaching to
+a session the user is already in is next. Mid-turn requests aren't mirrored into session
+history, so they are lossy on `--resume` (Claude Code #41230). Only the MCP surface is
+taped, not the daemon's own socket/stream boundary. The design ledger names the mid-turn
+gap and the recording gap as debts with the condition that discharges each.
 
 ## The record
 

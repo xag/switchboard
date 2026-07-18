@@ -59,8 +59,12 @@ class Switchboard:
         self.by_token: dict[str, Pending] = {}    # token -> Pending
         self.reqs: dict[str, Req] = {}            # request_id -> Req
         self.inbox: "asyncio.Queue[str]" = asyncio.Queue()
+        self._enqueued = asyncio.Event()  # fired whenever a request is queued
         self._rn = 0
         self._pn = 0
+
+    def _queued_count(self) -> int:
+        return sum(1 for r in self.reqs.values() if r.status == "queued")
 
     # -- id minting (deterministic per lifetime; readable in the WAL) ---------------
 
@@ -157,7 +161,22 @@ class Switchboard:
         req.fut = asyncio.get_running_loop().create_future()
         self.reqs[rid] = req
         self.inbox.put_nowait(rid)
+        self._enqueued.set()  # wake any servicer waiting on pending work
         return {"ok": True, "request_id": rid}
+
+    async def wait_pending(self, msg: dict) -> dict:
+        """Long-poll for queued work WITHOUT taking it — the servicer's signal to inject a
+        turn. Returns as soon as a request is queued, or the count (possibly 0) on timeout.
+        Peeking, not taking, keeps take/deliver the client's job."""
+        if self._queued_count() > 0:
+            return {"ok": True, "pending": self._queued_count()}
+        self._enqueued.clear()
+        wait = float(msg.get("wait", 25.0))
+        try:
+            await asyncio.wait_for(self._enqueued.wait(), timeout=wait)
+        except asyncio.TimeoutError:
+            pass
+        return {"ok": True, "pending": self._queued_count()}
 
     async def await_result(self, msg: dict) -> dict:
         rid = msg.get("request_id", "")
@@ -224,6 +243,8 @@ class Switchboard:
             return await self.await_result(msg)
         if verb == V.TAKE:
             return await self.take(msg)
+        if verb == V.WAIT_PENDING:
+            return await self.wait_pending(msg)
         if verb == V.DELIVER:
             return self.deliver(msg)
         return {"ok": False, "error": f"unknown verb {verb!r}"}

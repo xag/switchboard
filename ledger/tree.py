@@ -28,7 +28,8 @@ def build() -> Quern:
     quern = Quern(packages=[next(r for r in refs if r.name == "ledger")])
     quern = lib.effective(quern)
     quern.root.children = [_SINGLETON, _TRANSPORT, _PAIRING, _TRANSPORTS_NOT_ADJUDICATES,
-                           _WRITE_AHEAD, _CLIENT_IS_LIVE, _TRANSCRIPT_GAP, _DAEMON_UNRECORDED]
+                           _WRITE_AHEAD, _CLIENT_IS_LIVE, _SERVICER_OWN_SESSION,
+                           _TRANSCRIPT_GAP, _DAEMON_UNRECORDED]
     return quern
 
 
@@ -232,18 +233,51 @@ _CLIENT_IS_LIVE = Node(
             "Servicing rides Claude Code's stream-json turn injection, which is "
             "undocumented for a running session (issue #24594; hence the repo's "
             "experimental mark) and may change; if it does, the return path and the "
-            "record still stand and only the delivery of the turn needs rework. No claim "
-            "is made that a request is serviced without *any* turn — only without one the "
-            "human has to start.",
+            "record still stand and only the delivery of the turn needs rework. The "
+            "servicer (switchboard/servicer.py) realizes this: a persistent stream-json "
+            "session it drives, injecting a turn when the daemon reports queued work — "
+            "proven with multiple requests answered over one session that kept context "
+            "between them. No claim is made that a request is serviced without *any* turn "
+            "— only without one the human has to start.",
     },
     children=[
         Node(id="alt-headless-pump", kind="alternative",
-             name="Own a headless claude the daemon pumps requests into",
+             name="Own a headless -p one-shot the daemon pumps each request into",
              payload={"why":
-                      "That is a second unattended agent, not the user's session — it "
-                      "breaks the three-party interaction where the user steers from both "
-                      "the app and the client. The channel's value is reaching the live "
-                      "session, not standing up another one."}),
+                      "A `-p` one-shot is a fresh unattended agent per request — no "
+                      "persistence, no shared context, and a stand-in for the user's "
+                      "session rather than it. The live persistent session keeps context "
+                      "across requests, which is what 'the app uses the client' needs."}),
+    ],
+)
+
+
+_SERVICER_OWN_SESSION = Node(
+    id="the-servicer-launches-its-own-session",
+    kind="debt",
+    name="v0's servicer launches its own live Claude Code session and drives it; it does "
+         "not yet attach to a session the user already has open",
+    payload={
+        "note":
+            "The design's fullest form connects the app to the client that spawned it, or "
+            "one the user pairs with — the user's OWN attended session. v0 realizes "
+            "'auto-inject a servicing turn into a live session from the daemon' with a "
+            "session the servicer launches: persistent stream-json, context kept across "
+            "requests (not a -p one-shot), which is the mechanism proven end to end. "
+            "Attaching to a session the user is already sitting in is the next step and "
+            "the harder half — it needs a handle onto that session's input the daemon does "
+            "not have today.",
+    },
+    children=[
+        Node(id="discharge-attach-to-the-users-session", kind="discharge",
+             payload={
+                 "condition":
+                     "The servicer injects into a Claude Code session the user already "
+                     "has open and is attending — the spawning client, or one paired "
+                     "explicitly — rather than launching its own, with how that session's "
+                     "input is reached (a stdin handle, or a client facility) journaled "
+                     "here.",
+             }),
     ],
 )
 

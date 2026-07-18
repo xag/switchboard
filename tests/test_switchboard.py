@@ -126,6 +126,15 @@ def test_bogus_token_is_not_serviced(channel):
     assert bare["ok"] is False and "request_id" not in bare
 
 
+def test_wait_pending_reports_queued_work(channel):
+    token, _, _ = _authorize(channel, "notes")
+    idle = protocol.call(channel, V.WAIT_PENDING, wait=0.3, timeout=3)
+    assert idle["pending"] == 0  # nothing queued -> times out at zero
+    protocol.call(channel, V.ASK, token=token, request={"q": 1})
+    busy = protocol.call(channel, V.WAIT_PENDING, wait=1, timeout=3)
+    assert busy["pending"] >= 1  # a queued request wakes the servicer's poll
+
+
 def test_await_unknown_request_errors(channel):
     r = protocol.call(channel, V.AWAIT_RESULT, request_id="nope", wait=1, timeout=3)
     assert r["ok"] is False
