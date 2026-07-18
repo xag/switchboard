@@ -1,0 +1,6 @@
+.venv/
+.quern/
+.switchboard/
+__pycache__/
+flight/
+*.egg-info/
