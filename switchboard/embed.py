@@ -159,10 +159,18 @@ class Channel:
 
     # -- the remote MCP surface the app mounts ---------------------------------------
 
+    def register_on(self, mcp: FastMCP) -> None:
+        """Put this channel's user-side tools on an existing MCP server. An app that already
+        serves its own surface carries the channel on it — the client that spawned the app
+        services requests through the same connection, no separate connector. This is the
+        primary shape: switchboard replaces sampling on the app's own surface. `build_mcp`
+        uses it for the standalone (separate-surface) case."""
+        _tools.register(mcp, _CoreHandlers(self.board))
+
     def build_mcp(self, name: str = "switchboard") -> FastMCP:
         """The user-side tools bound to this channel's core, with flight recording armed."""
         mcp = FastMCP(name)
-        _tools.register(mcp, _CoreHandlers(self.board))
+        self.register_on(mcp)
         try:
             from flight_recorder import install_mcp
 
