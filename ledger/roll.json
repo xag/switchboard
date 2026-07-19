@@ -1,66 +1,82 @@
 [
   {
     "path": "a-hosted-app-self-hosts-its-channel",
-    "kind": "decision"
+    "kind": "decision",
+    "digest": "d65244015471"
   },
   {
     "path": "a-hosted-app-self-hosts-its-channel/alt-hosted-relay",
-    "kind": "alternative"
+    "kind": "alternative",
+    "digest": "8ad65cce9ffe"
   },
   {
     "path": "broker-core-is-transport-free",
-    "kind": "decision"
+    "kind": "decision",
+    "digest": "1ce46dabb909"
   },
   {
     "path": "broker-core-is-transport-free/alt-reimplement-per-transport",
-    "kind": "alternative"
+    "kind": "alternative",
+    "digest": "5646e2aae018"
   },
   {
     "path": "endpoint-is-loopback-tcp",
-    "kind": "decision"
+    "kind": "decision",
+    "digest": "fd9ec3224d28"
   },
   {
     "path": "endpoint-is-loopback-tcp/alt-uds-or-pipe",
-    "kind": "alternative"
+    "kind": "alternative",
+    "digest": "0ca67aa95809"
   },
   {
     "path": "one-shared-broker-per-user",
-    "kind": "decision"
+    "kind": "decision",
+    "digest": "01f73f32003c"
   },
   {
     "path": "one-shared-broker-per-user/alt-per-session",
-    "kind": "alternative"
+    "kind": "alternative",
+    "digest": "68ae3fd00bc4"
   },
   {
     "path": "pairing-is-authorized-with-a-matched-code",
-    "kind": "decision"
+    "kind": "decision",
+    "digest": "27c387b886da"
   },
   {
     "path": "pairing-is-authorized-with-a-matched-code/alt-silent",
-    "kind": "alternative"
+    "kind": "alternative",
+    "digest": "5233cbc0eaa9"
   },
   {
     "path": "services-in-the-users-existing-session",
-    "kind": "decision"
+    "kind": "decision",
+    "digest": "835fe84710c4"
   },
   {
     "path": "services-in-the-users-existing-session/alt-spawn-a-client",
-    "kind": "alternative"
+    "kind": "alternative",
+    "digest": "f603bf68b8c6"
   },
   {
     "path": "the-channel-transports-it-does-not-adjudicate",
-    "kind": "decision"
+    "kind": "decision",
+    "digest": "d9caecadbd4b"
   },
   {
     "path": "the-channel-transports-it-does-not-adjudicate/alt-screen",
-    "kind": "alternative"
+    "kind": "alternative",
+    "digest": "09054873ddd3"
   },
   {
     "path": "write-ahead-before-send",
-    "kind": "decision"
+    "kind": "decision",
+    "digest": "f4a6f98da9ba"
   },
   {
     "path": "write-ahead-before-send/alt-on-completion",
-    "kind": "alternative"
+    "kind": "alternative",
+    "digest": "8e85ccea12b7"
   }
 ]
