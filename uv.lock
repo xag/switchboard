@@ -584,7 +584,7 @@ wheels = [
 [[package]]
 name = "quern"
 version = "0.1.0"
-source = { git = "https://github.com/xag/quern?rev=4d04c0b#4d04c0bcad4af4826d64cc6f94b7d4e93103bcf5" }
+source = { git = "https://github.com/xag/quern?rev=eb7e451#eb7e4518d84da9798b0a15d1b635d81c813e6804" }
 dependencies = [
     { name = "pydantic" },
     { name = "wasmtime" },
@@ -782,7 +782,7 @@ dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
-ledger = [{ name = "quern", git = "https://github.com/xag/quern?rev=4d04c0b" }]
+ledger = [{ name = "quern", git = "https://github.com/xag/quern?rev=eb7e451" }]
 
 [[package]]
 name = "typing-extensions"

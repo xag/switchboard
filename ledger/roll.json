@@ -1,0 +1,66 @@
+[
+  {
+    "path": "a-hosted-app-self-hosts-its-channel",
+    "kind": "decision"
+  },
+  {
+    "path": "a-hosted-app-self-hosts-its-channel/alt-hosted-relay",
+    "kind": "alternative"
+  },
+  {
+    "path": "broker-core-is-transport-free",
+    "kind": "decision"
+  },
+  {
+    "path": "broker-core-is-transport-free/alt-reimplement-per-transport",
+    "kind": "alternative"
+  },
+  {
+    "path": "endpoint-is-loopback-tcp",
+    "kind": "decision"
+  },
+  {
+    "path": "endpoint-is-loopback-tcp/alt-uds-or-pipe",
+    "kind": "alternative"
+  },
+  {
+    "path": "one-shared-broker-per-user",
+    "kind": "decision"
+  },
+  {
+    "path": "one-shared-broker-per-user/alt-per-session",
+    "kind": "alternative"
+  },
+  {
+    "path": "pairing-is-authorized-with-a-matched-code",
+    "kind": "decision"
+  },
+  {
+    "path": "pairing-is-authorized-with-a-matched-code/alt-silent",
+    "kind": "alternative"
+  },
+  {
+    "path": "services-in-the-users-existing-session",
+    "kind": "decision"
+  },
+  {
+    "path": "services-in-the-users-existing-session/alt-spawn-a-client",
+    "kind": "alternative"
+  },
+  {
+    "path": "the-channel-transports-it-does-not-adjudicate",
+    "kind": "decision"
+  },
+  {
+    "path": "the-channel-transports-it-does-not-adjudicate/alt-screen",
+    "kind": "alternative"
+  },
+  {
+    "path": "write-ahead-before-send",
+    "kind": "decision"
+  },
+  {
+    "path": "write-ahead-before-send/alt-on-completion",
+    "kind": "alternative"
+  }
+]

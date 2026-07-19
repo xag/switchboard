@@ -20,7 +20,7 @@ dev = ["pytest>=8", "uvicorn>=0.30"]
 
 [tool.uv.sources]
 # Pinned by rev, always — the estate's fork-or-republish doctrine over resolver algebra.
-quern = { git = "https://github.com/xag/quern", rev = "4d04c0b" }
+quern = { git = "https://github.com/xag/quern", rev = "eb7e451" }
 flight-recorder = { git = "https://github.com/xag/flight-recorder", rev = "f23db0c" }
 
 [build-system]
