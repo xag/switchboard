@@ -24,7 +24,8 @@ def build() -> Quern:
                            _EXISTING_SESSION, _CORE_IS_TRANSPORT_FREE, _EMBED_SELF_HOSTS,
                            _SPAWN_SECRET, _HOOKS_NUDGE, _SHARE_RIDES_AUTHORIZE,
                            _LISTENER, _TOLERATE_OLDER_DAEMON, _CHANNEL_DEATH_IS_TOLD,
-                           _CONNECTOR_CARRIES_ITS_ARMING, _PAIRING_IS_NOT_AUTHENTICATION]
+                           _CONNECTOR_CARRIES_ITS_ARMING, _PAIRING_IS_NOT_AUTHENTICATION,
+                           _ADMITTED_ONCE_IS_REMEMBERED, _EMBED_DOES_NOT_ASK]
     return quern
 
 
@@ -376,6 +377,81 @@ _CONNECTOR_CARRIES_ITS_ARMING = Node(
              payload={"why": "It would put an app's payloads on an unauthenticated route "
                              "to save a watcher one further call it never needed to "
                              "make."}),
+    ],
+)
+
+
+_ADMITTED_ONCE_IS_REMEMBERED = Node(
+    id="an-admitted-app-is-remembered",
+    kind="decision",
+    name="An app the user admitted is remembered across restarts, may be pre-approved by "
+         "name, and stops working the moment it is revoked",
+    payload={
+        "supersedes":
+            "pairing-is-authorized-with-a-matched-code, which says a pairing is 'never "
+            "silent'. An allowlisted app now pairs silently, and a remembered one is not "
+            "asked again. The claim that survives is the one that mattered: an app the "
+            "user has not admitted cannot reach the session. What changes is how often "
+            "the question is put, once answered.",
+        "rationale":
+            "Pairings lived in memory, so every daemon restart made every app a stranger "
+            "and re-asked a question already answered. Ceremony that repeats for a "
+            "settled answer is what teaches users to click through, which costs exactly "
+            "when the prompt finally matters. So the registry keeps a SHA-256 of the "
+            "token — never the token, so the record is decisions and not credentials — "
+            "and `switchboard allow` pre-approves by name, which is the config-file form "
+            "of the trust already shown by installing the app. Revocation is checked on "
+            "every request rather than at startup, since a revocation that waits for a "
+            "restart is not one.",
+        "note":
+            "The limit, stated rather than papered over: on a single-user machine every "
+            "process runs as the user and can read the app's stored token, so this cannot "
+            "tell an app from something that read its token file. It records which apps "
+            "were admitted; the machine's own boundaries are what separate processes.",
+    },
+    children=[
+        Node(id="alt-keep-pairings-in-memory", kind="alternative",
+             name="Leave pairings in memory and re-pair after every restart",
+             payload={"why": "Re-asks a settled question on a schedule the user did not "
+                             "choose, and trains them to approve without reading."}),
+        Node(id="alt-store-the-token-itself", kind="alternative",
+             name="Store the tokens so the daemon can reissue them",
+             payload={"why": "Turns a record of decisions into a credential store worth "
+                             "stealing, for no capability the hash does not already "
+                             "provide."}),
+        Node(id="alt-check-revocation-at-startup", kind="alternative",
+             name="Read the registry once when the daemon starts",
+             payload={"why": "Revoking an app would then do nothing until the next "
+                             "restart, which is the one moment you cannot wait for."}),
+    ],
+)
+
+
+_EMBED_DOES_NOT_ASK = Node(
+    id="an-embedded-channel-does-not-ask-for-pairing",
+    kind="decision",
+    name="A hosted channel admits its own app without a pairing, because the app owns the "
+         "broker and the connector was the consent",
+    payload={
+        "rationale":
+            "In embed mode `Channel` lives in the app's own process and `ask` is a method "
+            "call. Pairing asks 'may this app use the channel' of the app that IS the "
+            "channel — permission asked of itself, and a code the same party shows and "
+            "matches. The consent that carries meaning is the user adding the connector, "
+            "which only they can do. `require_pairing=True` remains for `register_on`, "
+            "where the user added the connector for the app's own tools and never agreed "
+            "to hand over their session — there the second question is real.",
+        "note":
+            "This removes ceremony, not protection: what guards a hosted channel from "
+            "strangers is auth_token (see pairing-answers-which-app-not-who-is-calling), "
+            "which pairing never did.",
+    },
+    children=[
+        Node(id="alt-ask-anyway-in-embed", kind="alternative",
+             name="Keep the code ceremony for hosted channels",
+             payload={"why": "A ceremony where one party plays both sides proves nothing, "
+                             "and spends the user's attention on a decision they already "
+                             "made by adding the connector."}),
     ],
 )
 

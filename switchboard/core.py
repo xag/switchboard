@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from . import __version__, wal
+from . import __version__, registry, wal
 from .protocol import V
 
 # Pairing codes expire if left unauthorized this long — a stale pending pairing should not
@@ -41,6 +41,9 @@ class Pending:
     status: str = "pending"  # pending | preauthorized | authorized | denied
     token: Optional[str] = None
     secret: Optional[str] = None  # set only while preauthorized; consumed by the claim
+    # True when the registry vouches for this pairing, so revoking the app there must
+    # invalidate it here too — otherwise `forget` would not bite until a restart.
+    registry_backed: bool = False
 
 
 @dataclass
@@ -55,9 +58,13 @@ class Req:
 
 
 class Switchboard:
-    def __init__(self, record: Optional[Record] = None) -> None:
+    def __init__(self, record: Optional[Record] = None, remember: bool = True) -> None:
         self.nonce = secrets.token_hex(8)
         self._record: Record = record if record is not None else wal.append
+        # The registry is the user's machine remembering who it admitted. A hosted app
+        # embedding this core has no business reading or writing the user's ~/.switchboard,
+        # so it turns this off and its pairings live and die with the process.
+        self._remember = remember
         self.pending: dict[str, Pending] = {}     # pairing_id -> Pending (and authorized)
         self.by_token: dict[str, Pending] = {}    # token -> Pending
         self.by_secret: dict[str, Pending] = {}   # spawn secret -> preauthorized Pending
@@ -79,7 +86,11 @@ class Switchboard:
     # -- pairing --------------------------------------------------------------------
 
     def _open_pairing(self, app: str) -> Pending:
-        """Idempotent while pending: an app re-requesting keeps its code and slot."""
+        """Idempotent while pending: an app re-requesting keeps its code and slot.
+
+        An allowlisted app never reaches the ceremony: the user pre-approved it by name,
+        so the pairing opens already authorized and its token is waiting on the first
+        `pair_status`. Asking anyway would be re-asking a question already answered."""
         for p in self.pending.values():
             if p.app == app and p.status == "pending" \
                     and time.time() - p.created < PAIR_TTL:
@@ -88,6 +99,31 @@ class Switchboard:
                     time.time())
         self.pending[p.pairing_id] = p
         self._record({"ts": time.time(), "event": "pair_request",
+                      "pairing_id": p.pairing_id, "app": app})
+        if self._remember and registry.is_allowlisted(app):
+            p.status = "authorized"
+            p.token = secrets.token_urlsafe(24)
+            p.registry_backed = True
+            self.by_token[p.token] = p
+            registry.remember(app, p.token)
+            self._record({"ts": time.time(), "event": "allowlisted",
+                          "pairing_id": p.pairing_id, "app": app})
+        return p
+
+    def _remembered(self, token: str) -> Optional[Pending]:
+        """A token this daemon never issued, but a previous one did and the user approved.
+        Rebuild the pairing in memory rather than send the app back through a ceremony it
+        already completed — a restart is our discontinuity, not theirs."""
+        if not self._remember:
+            return None
+        app = registry.app_for_token(token)
+        if app is None:
+            return None
+        p = Pending(self._next_pairing_id(), app, "", time.time(),
+                    status="authorized", token=token, registry_backed=True)
+        self.pending[p.pairing_id] = p
+        self.by_token[token] = p
+        self._record({"ts": time.time(), "event": "remembered",
                       "pairing_id": p.pairing_id, "app": app})
         return p
 
@@ -126,6 +162,11 @@ class Switchboard:
         p.status = "authorized"
         p.token = secrets.token_urlsafe(24)
         self.by_token[p.token] = p
+        # Remembered from here on: the user answered this question, and a daemon restart
+        # is no reason to ask it again.
+        if self._remember:
+            registry.remember(p.app, p.token)
+            p.registry_backed = True
         self._record({"ts": time.time(), "event": "authorize",
                       "pairing_id": p.pairing_id, "app": p.app})
         return {"ok": True, "token": p.token, "app": p.app}
@@ -180,6 +221,14 @@ class Switchboard:
         pairing: the app gets a code to show and awaits authorization, then retries."""
         token = msg.get("token")
         p = self.by_token.get(token) if token else None
+        # A revoked app must stop working now, not at the next restart — so a pairing the
+        # registry vouched for is only as good as the registry still saying so.
+        if p is not None and p.registry_backed and not registry.knows(token):
+            self.by_token.pop(token, None)
+            p.status = "denied"
+            p = None
+        if p is None and token:
+            p = self._remembered(token)
         if p is None:
             app = (msg.get("app") or "").strip()
             if not app:

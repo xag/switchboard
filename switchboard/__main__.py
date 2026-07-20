@@ -3,6 +3,9 @@
     install-hooks   Wire the hooks into a client's settings, so every session has the
                     channel. --user (default) or --project [PATH]; --dry-run to look.
     uninstall-hooks Remove them again from the same place.
+    apps            List the apps admitted to the channel, and how.
+    allow <app>     Pre-approve an app by name, so it never asks to pair.
+    forget <app>    Revoke it: the next connection pairs from scratch.
     daemon          Run the broker in the foreground (the hook spawns this detached).
     hook            SessionStart hook: bring the shared daemon up idempotently, then exit.
     hook-stop       Stop hook: hold the agent's stop while app requests are queued.
@@ -22,6 +25,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 
 
 def _install_cmd(cmd: str, argv: list[str]) -> int:
@@ -75,6 +79,30 @@ def main(argv: list[str]) -> int:
 
     if cmd in ("install-hooks", "uninstall-hooks"):
         return _install_cmd(cmd, argv[1:])
+
+    if cmd in ("apps", "allow", "forget"):
+        from . import registry
+        rest = argv[1:]
+        if cmd == "apps":
+            rows = registry.entries()
+            if not rows:
+                print("no apps admitted yet")
+                return 0
+            for row in rows:
+                when = (time.strftime("%Y-%m-%d", time.localtime(row["approved_at"]))
+                        if row["approved_at"] else "?")
+                print(f"{row['app']:24s} {row['source']:12s} since {when}")
+            return 0
+        if not rest:
+            print(f"name an app: switchboard {cmd} <app>", file=sys.stderr)
+            return 2
+        if cmd == "allow":
+            registry.allow(rest[0])
+            print(f"{rest[0]} is pre-approved; it will pair without asking")
+            return 0
+        print(f"forgot {rest[0]}" if registry.forget(rest[0])
+              else f"{rest[0]} was not registered")
+        return 0
 
     if cmd == "daemon":
         from .daemon import run

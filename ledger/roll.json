@@ -45,6 +45,36 @@
     "digest": "ea22f5bb201c"
   },
   {
+    "path": "an-admitted-app-is-remembered",
+    "kind": "decision",
+    "digest": "84eade7c8f68"
+  },
+  {
+    "path": "an-admitted-app-is-remembered/alt-check-revocation-at-startup",
+    "kind": "alternative",
+    "digest": "a15d133c1789"
+  },
+  {
+    "path": "an-admitted-app-is-remembered/alt-keep-pairings-in-memory",
+    "kind": "alternative",
+    "digest": "48bcc3bf1b72"
+  },
+  {
+    "path": "an-admitted-app-is-remembered/alt-store-the-token-itself",
+    "kind": "alternative",
+    "digest": "ec26b5ffc53d"
+  },
+  {
+    "path": "an-embedded-channel-does-not-ask-for-pairing",
+    "kind": "decision",
+    "digest": "7b87d986e15c"
+  },
+  {
+    "path": "an-embedded-channel-does-not-ask-for-pairing/alt-ask-anyway-in-embed",
+    "kind": "alternative",
+    "digest": "06e55383cf99"
+  },
+  {
     "path": "broker-core-is-transport-free",
     "kind": "decision",
     "digest": "d57d3703dc10"

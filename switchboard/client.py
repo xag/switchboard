@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import discovery, protocol
@@ -42,14 +43,41 @@ class NotPaired(Exception):
 
 
 class App:
-    def __init__(self, name: str, secret: Optional[str] = None) -> None:
+    def __init__(self, name: str, secret: Optional[str] = None,
+                 token_store: Optional[Path] = None, remember: bool = True) -> None:
         self.name = name
-        self.token: Optional[str] = None
         self._info: Optional[dict] = None
         self._pairing_id: Optional[str] = None
         # A spawn secret, if the session that launched this app minted one. Passed
         # explicitly or found in the environment; `ask` redeems it on first use.
         self._secret = secret if secret is not None else os.environ.get(SECRET_ENV)
+        # Where this app keeps the token it was issued, so a pairing survives a restart
+        # of either side. Pass remember=False for an app that would rather ask every time.
+        self._store = token_store if token_store is not None else self._default_store()
+        self._remember = remember
+        self.token: Optional[str] = self._load_token() if remember else None
+
+    def _default_store(self) -> Path:
+        safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in self.name)
+        return discovery.HOME / "apps" / f"{safe}.token"
+
+    def _load_token(self) -> Optional[str]:
+        try:
+            return self._store.read_text("utf-8").strip() or None
+        except OSError:
+            return None
+
+    def _save_token(self, token: str) -> None:
+        """Keep the token so the next run is recognised. It is a file in the user's own
+        home, readable by anything running as them — the registry docstring is explicit
+        that this cannot separate processes, only remember decisions."""
+        if not self._remember:
+            return
+        try:
+            self._store.parent.mkdir(parents=True, exist_ok=True)
+            self._store.write_text(token, encoding="utf-8")
+        except OSError:
+            pass  # an app that cannot persist still works; it just re-pairs next time
 
     # -- liveness -------------------------------------------------------------------
 
@@ -65,9 +93,10 @@ class App:
         info = discovery.alive()
         if not info:
             raise Stale("no live switchboard")
-        # A restarted daemon invalidates our token — its pairings lived in memory.
-        if self._info and info.get("nonce") != self._info.get("nonce"):
-            self.token = None
+        # A restarted daemon no longer invalidates the token: the user's decision is kept
+        # in the registry, so the new daemon recognises what the old one issued. If it
+        # does not (a forgotten or revoked app), `ask` patches through to a pairing —
+        # which is the right place to find out, rather than discarding a good token here.
         self._info = info
         return discovery.endpoint_of(info)
 
@@ -93,6 +122,7 @@ class App:
         if not r.get("ok"):
             raise RuntimeError(r.get("error", "claim failed"))
         self.token = r["token"]
+        self._save_token(self.token)
         return self.token
 
     def pairing_prompt(self) -> str:
@@ -115,6 +145,7 @@ class App:
                               pairing_id=self._pairing_id)
             if s.get("status") == "authorized":
                 self.token = s["token"]
+                self._save_token(self.token)
                 return self.token
             if s.get("status") == "denied":
                 raise Denied("pairing was declined")
@@ -137,8 +168,19 @@ class App:
         if not r.get("ok"):
             if r.get("status") == "unpaired":
                 self._pairing_id = r["pairing_id"]
-                raise NotPaired(r["code"], r["pairing_id"])
-            raise RuntimeError(r.get("error", "ask failed"))
+                # An allowlisted app's pairing opens already authorized, so the token is
+                # there to be collected — take it and go, rather than raise NotPaired at
+                # a caller who was pre-approved precisely so it need not handle this.
+                s = protocol.call(ep, V.PAIR_STATUS, pairing_id=r["pairing_id"])
+                if s.get("status") == "authorized":
+                    self.token = s["token"]
+                    self._save_token(self.token)
+                    r = protocol.call(ep, V.ASK, token=self.token, app=self.name,
+                                      request=request, urgency=urgency)
+                if not r.get("ok"):
+                    raise NotPaired(r.get("code", ""), r.get("pairing_id", ""))
+            else:
+                raise RuntimeError(r.get("error", "ask failed"))
         rid = r["request_id"]
         res = protocol.call(ep, V.AWAIT_RESULT, request_id=rid, wait=wait,
                             timeout=wait + 10.0)

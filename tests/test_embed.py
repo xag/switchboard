@@ -23,8 +23,10 @@ from switchboard.embed import Channel, Denied, NotPaired
 # -- direct: the core serviced in-process, no transport -------------------------------
 
 def test_first_ask_patches_through_and_is_serviced():
+    """With require_pairing=True — the `register_on` case, where the user added the
+    connector for the app's own tools and never agreed to hand over their session."""
     events: list[dict] = []
-    ch = Channel("hosted-notes", record=events.append)
+    ch = Channel("hosted-notes", record=events.append, require_pairing=True)
 
     async def body():
         # No pairing yet: the first ask patches through, carrying a code to show the user.
@@ -53,6 +55,25 @@ def test_first_ask_patches_through_and_is_serviced():
 
     order = [e["event"] for e in events if e.get("request_id") == "r1"]
     assert order == ["request", "result"]  # write-ahead: request strictly before result
+
+
+def test_by_default_a_hosted_app_needs_no_pairing():
+    """The app owns the broker here: `Channel` is in the app's own process and `ask` is a
+    method call, so pairing would be the app asking permission of itself. The consent that
+    means something is the user having added the connector."""
+    ch = Channel("hosted-notes", record=lambda e: None)
+
+    async def body():
+        async def service():
+            took = await ch.board.take({"wait": 2})
+            ch.board.deliver({"request_id": took["request_id"], "result": "served"})
+
+        servicing = asyncio.ensure_future(service())
+        assert await ch.ask({"q": 1}) == "served"   # no NotPaired, no code shown
+        await servicing
+        assert ch.paired
+
+    asyncio.run(body())
 
 
 def test_denied_pairing_raises():

@@ -17,14 +17,23 @@ faithfully and keeps a record; it does not judge what an app sends.
 - **One shared daemon per user**, brought up by a `SessionStart` hook. It binds a loopback
   TCP port and publishes it in `~/.switchboard/switchboard.json`; any app and any session
   find it there.
-- **An app pairs once**, one of three ways. The default ceremony: the app shows a code,
-  the user authorizes it in their client (naming the app), and the code matched on both
-  sides confirms it. An app **the session spawns itself** skips the ceremony — the session
-  mints a spawn secret (`switchboard_preauthorize`), hands it over in `SWITCHBOARD_SECRET`,
-  and the app redeems it once; launching it was the consent. An **external app** folds the
-  ceremony into a share: `pairing_prompt()` returns a paste-able line carrying the code,
-  and the user launching it in their session is the acceptance. After any of the three,
-  requests flow without re-asking.
+- **An app pairs once, and stays paired.** The default ceremony: the app shows a code, the
+  user authorizes it in their client (naming the app), and the code matched on both sides
+  confirms it. An app **the session spawns itself** skips the ceremony — the session mints
+  a spawn secret (`switchboard_preauthorize`), hands it over in `SWITCHBOARD_SECRET`, and
+  the app redeems it once; launching it was the consent. An **external app** folds the
+  ceremony into a share: `pairing_prompt()` returns a paste-able line the user launches in
+  their session. A **hosted app** is not asked at all — it owns its own broker, so the
+  connector was the consent.
+
+  What the user admitted is remembered in `~/.switchboard/apps.json` (a hash of the token,
+  never the token), so a daemon restart does not re-ask a settled question:
+
+  ```
+  switchboard apps            # who has been admitted, and how
+  switchboard allow <app>     # pre-approve one by name; it never asks
+  switchboard forget <app>    # revoke — takes effect on the next request, not the next restart
+  ```
 - **The user's session services requests** by calling the switchboard's MCP tools —
   `switchboard_take` pulls the next request, `switchboard_deliver` returns the result.
 - **Waiting requests nudge the agent** two ways, because one is not enough. The client's

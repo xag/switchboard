@@ -119,12 +119,16 @@ class Channel:
 
     def __init__(self, app: str, record: Optional[Record] = None,
                  public_url: Optional[str] = None,
-                 auth_token: Optional[str] = None) -> None:
+                 auth_token: Optional[str] = None,
+                 require_pairing: bool = False) -> None:
         name = (app or "").strip()
         if not name:
             raise ValueError("a channel must name its app")
         self.app = name
-        self.board = Switchboard(record=record if record is not None else wal.append)
+        # remember=False: a hosted app's pairings are its own, not entries in the user's
+        # local registry — the app may not even run on the user's machine.
+        self.board = Switchboard(record=record if record is not None else wal.append,
+                                 remember=False)
         self._token: Optional[str] = None
         self._pairing_id: Optional[str] = None
         # Where this channel is reachable from outside, if the app knows (it may sit
@@ -136,6 +140,13 @@ class Channel:
         # reachable URL without this, anyone can take a request (reading its payload and
         # denying it to the real session) and deliver a forged answer back to the app.
         self.auth_token = auth_token or None
+        # Off by default, because in embed mode the app OWNS the broker: `Channel` lives
+        # in the app's own process and `ask` is a method call. Pairing asks "may this app
+        # use the channel" of the app that is the channel — it would be asking permission
+        # of itself. The consent that means something is the user adding the connector.
+        # Turn it on for `register_on`, where the user added the connector for the app's
+        # own tools and never agreed to hand over their session.
+        self.require_pairing = require_pairing
 
     # -- pairing (the app owns how it shows the code) --------------------------------
 
@@ -149,6 +160,16 @@ class Channel:
         r = self.board.pair_request({"app": self.app})
         self._pairing_id = r["pairing_id"]
         return r["code"]
+
+    def _self_authorize(self) -> None:
+        """Admit the app to its own channel, with no ceremony. Only reachable when
+        `require_pairing` is off; the user's consent was adding the connector."""
+        opened = self.board.pair_request({"app": self.app})
+        granted = self.board.authorize({"pairing_id": opened["pairing_id"],
+                                        "code": opened["code"]})
+        if granted.get("ok"):
+            self._pairing_id = opened["pairing_id"]
+            self._token = granted["token"]
 
     def claim(self, secret: str) -> None:
         """Redeem a spawn secret the user's session minted (switchboard_preauthorize) and
@@ -200,6 +221,8 @@ class Channel:
         yet — the first request patches through to a pairing, exactly as the local wire.
         `urgency` is how the session should surface it: 'idle' waits for the turn to end,
         'turn' asks to be interjected mid-turn."""
+        if self._token is None and not self.require_pairing:
+            self._self_authorize()
         r = self.board.ask({"token": self._token, "app": self.app, "request": request,
                             "urgency": urgency})
         if not r.get("ok"):
