@@ -73,6 +73,9 @@ at the next idle moment.
 Any language can speak the wire directly — see `switchboard/protocol.py` (newline-delimited
 JSON over the loopback port).
 
+Every supported workflow has a runnable demo under [`demos/`](demos/) — the three pairing
+paths, urgency, and the embedded hosted channel.
+
 ## Embed it in a hosted app
 
 The loopback daemon only reaches apps on the user's machine. A hosted app on a remote server
