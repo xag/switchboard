@@ -155,6 +155,11 @@ _EXISTING_SESSION = Node(
 _CORE_IS_TRANSPORT_FREE = Node(
     id="broker-core-is-transport-free",
     kind="decision",
+    meta={"amended": "d57d3703dc10 the rationale said 'the five user-side MCP tools' and "
+                     "there are now seven (preauthorize, then waiting). Only the count "
+                     "moved: the claim — defined once, bound to either transport's "
+                     "handlers — is exactly what it was, and adding a tool to both faces "
+                     "at once is that claim being kept, not broken."},
     name="The broker core is one transport-free state machine; each deployment is a thin "
          "shell around the same instance",
     payload={
@@ -163,7 +168,7 @@ _CORE_IS_TRANSPORT_FREE = Node(
             "the wire that carries them is not. Keeping them in `core.Switchboard` — "
             "dict-in / dict-out verbs, no socket — lets the loopback daemon and the "
             "embeddable library reuse the identical verbs and logic, so a second deployment "
-            "is a shell, not a fork that drifts. The five user-side MCP tools are likewise "
+            "is a shell, not a fork that drifts. The user-side MCP tools are likewise "
             "defined once and bound to either transport's handlers.",
     },
     children=[

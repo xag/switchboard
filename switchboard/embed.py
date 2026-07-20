@@ -11,7 +11,7 @@ The core is the same `Switchboard` the daemon wraps; only the two faces change:
 
 - The **app** reaches the core in-process — `Channel.ask` calls the core directly, no wire.
 - The **user's client** reaches it over the network — `Channel.mcp_app()` returns an ASGI
-  app serving the identical five tools (`_tools`) over streamable-HTTP, which the app mounts
+  app serving the identical tools (`_tools`) over streamable-HTTP, which the app mounts
   in its own server.
 
 Both faces touch one `Switchboard`, so a request the app asks and a `take`/`deliver` the
@@ -65,6 +65,9 @@ class _CoreHandlers:
 
     def preauthorize(self, app: str) -> dict[str, Any]:
         return self._board.preauthorize({"app": app})
+
+    def waiting(self) -> dict[str, Any]:
+        return self._board.queue_status()
 
     async def take(self) -> dict[str, Any]:
         # Non-blocking: the remote client polls, so a take never holds an HTTP request open.

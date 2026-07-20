@@ -1,6 +1,6 @@
 """The MCP surface the local client mounts: the user's side of the loopback daemon.
 
-The five user-side tools are defined once in `_tools`; here they are bound to handlers that
+The user-side tools are defined once in `_tools`; here they are bound to handlers that
 reach the shared daemon over the same loopback wire an app uses (an MCP tool is an ordinary
 subprocess, so it dials 127.0.0.1 like anything else). The embeddable deployment binds the
 identical tools to the in-process core instead — see `embed.py`. When the session calls them
@@ -82,6 +82,9 @@ class _WireHandlers:
 
     def preauthorize(self, app: str) -> dict[str, Any]:
         return _wire(V.PREAUTHORIZE, app=app)
+
+    def waiting(self) -> dict[str, Any]:
+        return _wire(V.QUEUE_STATUS)
 
     def take(self) -> dict[str, Any]:
         return _wire(V.TAKE, wait=0)

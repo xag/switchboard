@@ -1,11 +1,12 @@
 """The user-side MCP tools, defined once for every deployment.
 
-The client mounts the same five tools whether the broker is a loopback daemon on the user's
-machine or a hosted app's own server across the network: authorize an app that wants to pair
-(`switchboard_pairings`, `switchboard_authorize`, `switchboard_deny`) and service what a
-paired app sends (`switchboard_take`, `switchboard_deliver`). Defining them here keeps the
-two transports from drifting — the verbs and their descriptions are identical by
-construction.
+The client mounts the same tools whether the broker is a loopback daemon on the user's
+machine or a hosted app's own server across the network: admit an app that wants to pair
+(`switchboard_pairings`, `switchboard_authorize`, `switchboard_deny`, and
+`switchboard_preauthorize` for an app the session spawns itself), see what is queued without
+consuming it (`switchboard_waiting`), and service what a paired app sends
+(`switchboard_take`, `switchboard_deliver`). Defining them here keeps the two transports
+from drifting — the verbs and their descriptions are identical by construction.
 
 `register(mcp, handlers)` binds the tools to a `Handlers` object. The local surface's
 handlers dial the daemon over the loopback wire; the embeddable surface's call the in-process
@@ -28,6 +29,7 @@ class Handlers(Protocol):
     def authorize(self, pairing_id: str, code: str) -> Reply: ...
     def deny(self, pairing_id: str) -> Reply: ...
     def preauthorize(self, app: str) -> Reply: ...
+    def waiting(self) -> Reply: ...
     def take(self) -> Reply: ...
     def deliver(self, request_id: str, result: Any) -> Reply: ...
 
@@ -64,6 +66,14 @@ def register(mcp: FastMCP, handlers: Handlers) -> None:
         the convention); the app redeems it once and then sends requests as a paired app.
         Only preauthorize an app you are spawning yourself, never one that asked you to."""
         return await _resolve(handlers.preauthorize(app))
+
+    @mcp.tool(structured_output=True)
+    async def switchboard_waiting() -> dict[str, Any]:
+        """What is queued, without taking anything: counts, the apps, and each waiting
+        request's id and urgency. Read-only — use this to look, and switchboard_take to
+        actually pull a request for servicing. A watcher outside the session polls this
+        to notice work without consuming it."""
+        return await _resolve(handlers.waiting())
 
     @mcp.tool(structured_output=True)
     async def switchboard_take() -> dict[str, Any]:

@@ -195,6 +195,67 @@ async def _call(fn):
     return fn()
 
 
+def test_waiting_reports_the_queue_without_consuming_it(embedded):
+    """Wake-on-idle for a hosted channel rests on this: a watcher must be able to see
+    that work is queued WITHOUT taking it, or it would eat the very request the session
+    is supposed to service."""
+    ch, url, loop, _ = embedded
+
+    async def on_server(coro):
+        return await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(coro, loop))
+
+    async def flow():
+        from mcp.client.session import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+
+        code = await on_server(_call(ch.begin_pairing))
+        async with streamable_http_client(url) as (read, write, _):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                assert "switchboard_waiting" in {
+                    t.name for t in (await session.list_tools()).tools}
+
+                pend = (await session.call_tool(
+                    "switchboard_pairings", {})).structuredContent["pairings"][0]
+                await session.call_tool("switchboard_authorize",
+                                        {"pairing_id": pend["pairing_id"], "code": code})
+                # The channel caches its token when it next reads its pairing status.
+                assert await on_server(_call(ch.pairing_status)) == "authorized"
+
+                # Nothing queued yet.
+                empty = (await session.call_tool(
+                    "switchboard_waiting", {})).structuredContent
+                assert empty["queued"] == 0 and empty["waiting"] == []
+
+                # The app asks; the watcher can now see it, named and with its urgency.
+                ask = asyncio.run_coroutine_threadsafe(
+                    ch.ask({"q": 1}, urgency="turn"), loop)
+                seen = None
+                for _ in range(40):
+                    seen = (await session.call_tool(
+                        "switchboard_waiting", {})).structuredContent
+                    if seen["queued"]:
+                        break
+                    await asyncio.sleep(0.05)
+                assert seen["queued"] == 1 and seen["interject"] == 1
+                assert seen["waiting"][0]["app"] == "hosted-notes"
+                assert seen["waiting"][0]["urgency"] == "turn"
+
+                # Looking twice consumed nothing: the request is still there to take.
+                again = (await session.call_tool(
+                    "switchboard_waiting", {})).structuredContent
+                assert again["queued"] == 1
+                took = (await session.call_tool(
+                    "switchboard_take", {})).structuredContent
+                assert took["request"] == {"q": 1}
+
+                await session.call_tool("switchboard_deliver",
+                                        {"request_id": took["request_id"], "result": "ok"})
+                assert await asyncio.wrap_future(ask) == "ok"
+
+    asyncio.run(asyncio.wait_for(flow(), timeout=20))
+
+
 def test_remote_authorize_refuses_a_mismatched_code(embedded):
     ch, url, loop, _ = embedded
 

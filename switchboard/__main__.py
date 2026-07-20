@@ -11,6 +11,8 @@
     listen          Announce each app request on stdout, one line apiece, until stopped.
                     Run under a client watcher (Monitor) so a request reaches the agent
                     even while the session sits idle — the hooks cannot do that alone.
+                    --url URL watches a hosted app's embedded channel over MCP instead
+                    of the local daemon.
     mcp             Serve the MCP surface on stdio (pairing + the return path).
     status          Print whether a live switchboard is reachable, and where.
 """
@@ -101,9 +103,16 @@ def main(argv: list[str]) -> int:
         return run(cmd.removeprefix("hook-"))
 
     if cmd == "listen":
-        from .hooks import listen
+        from .hooks import listen, listen_remote
+        url = None
+        if "--url" in argv:
+            i = argv.index("--url")
+            url = argv[i + 1] if len(argv) > i + 1 else None
+            if not url:
+                print("--url needs the channel's MCP endpoint", file=sys.stderr)
+                return 2
         try:
-            return listen()
+            return listen_remote(url) if url else listen()
         except KeyboardInterrupt:
             return 0
 

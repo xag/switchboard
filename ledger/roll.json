@@ -47,7 +47,7 @@
   {
     "path": "broker-core-is-transport-free",
     "kind": "decision",
-    "digest": "1ce46dabb909"
+    "digest": "d57d3703dc10"
   },
   {
     "path": "broker-core-is-transport-free/alt-reimplement-per-transport",

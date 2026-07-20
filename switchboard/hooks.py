@@ -150,32 +150,75 @@ def listen(poll: float = 1.0) -> int:
         except OSError:
             time.sleep(poll)
             continue
-        waiting = status.get("waiting")
-        if waiting is None:
-            # An older daemon predates `waiting` and reports only counts. The channel is
-            # shared and long-lived, so a newer client meeting an older daemon is normal,
-            # not an error — announce on the rise from empty rather than go mute. Being
-            # vaguer than the identified path beats the silence that hid this bug.
-            if status.get("queued", 0) and not seen:
-                seen.add("counted")
-                print(f"switchboard: {status['queued']} request(s) waiting from "
-                      f"{', '.join(status.get('apps') or ['an app'])} - service with "
-                      f"switchboard_take, then switchboard_deliver.", flush=True)
-            elif not status.get("queued", 0):
-                seen.discard("counted")
-            time.sleep(poll)
-            continue
-        for req in waiting:
-            rid = req["request_id"]
-            if rid in seen:
-                continue
-            seen.add(rid)
-            # ASCII only: this line crosses a console pipe, and a cp1252 console mangles
-            # anything prettier (the same lesson ledger/check.py records).
-            print(f"switchboard: {req['app']} sent request {rid} "
-                  f"(urgency={req['urgency']}) - service it with switchboard_take, "
-                  f"then switchboard_deliver.", flush=True)
+        _announce(status, seen)
         time.sleep(poll)
+
+
+def _announce(status: dict, seen: set) -> None:
+    """Print a line for each request not yet announced. Shared by both listeners, so a
+    local daemon and a hosted channel say the same thing in the same words.
+
+    ASCII only: these lines cross a console pipe, and a cp1252 console mangles anything
+    prettier (the same lesson ledger/check.py records)."""
+    waiting = status.get("waiting")
+    if waiting is None:
+        # An older daemon predates `waiting` and reports only counts. The channel is
+        # shared and long-lived, so a newer client meeting an older daemon is normal,
+        # not an error — announce on the rise from empty rather than go mute. Being
+        # vaguer than the identified path beats the silence that hid this bug.
+        if status.get("queued", 0) and not seen:
+            seen.add("counted")
+            print(f"switchboard: {status['queued']} request(s) waiting from "
+                  f"{', '.join(status.get('apps') or ['an app'])} - service with "
+                  f"switchboard_take, then switchboard_deliver.", flush=True)
+        elif not status.get("queued", 0):
+            seen.discard("counted")
+        return
+    for req in waiting:
+        rid = req["request_id"]
+        if rid in seen:
+            continue
+        seen.add(rid)
+        print(f"switchboard: {req['app']} sent request {rid} "
+              f"(urgency={req['urgency']}) - service it with switchboard_take, "
+              f"then switchboard_deliver.", flush=True)
+
+
+def listen_remote(url: str, poll: float = 2.0) -> int:
+    """The listener for an embedded channel: poll a hosted app's own MCP surface.
+
+    A hosted app has no daemon and no discovery file — its channel lives in its own
+    process, reachable only as the MCP endpoint the user added as a connector. So this
+    watcher speaks MCP rather than the loopback wire, calling `switchboard_waiting`, which
+    reports what is queued without taking it. Same announcements, same never-consumes
+    promise; only the transport differs, which is the whole point of a transport-free core.
+
+    The session is reconnected to on failure and `seen` is cleared when that happens: a
+    restarted app's request ids start over, and re-announcing something still queued is a
+    far cheaper error than going silent about it."""
+    import asyncio
+
+    async def watch() -> None:
+        from mcp.client.session import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+
+        while True:
+            seen: set[str] = set()
+            try:
+                async with streamable_http_client(url) as (read, write, _):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        while True:
+                            res = await session.call_tool("switchboard_waiting", {})
+                            status = res.structuredContent or {}
+                            if status.get("ok"):
+                                _announce(status, seen)
+                            await asyncio.sleep(poll)
+            except Exception:  # noqa: BLE001 — a hosted app restarts; keep watching
+                await asyncio.sleep(poll)
+
+    asyncio.run(watch())
+    return 0
 
 
 def run(event: str) -> int:

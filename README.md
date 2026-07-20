@@ -111,12 +111,22 @@ async def handle():
         show_the_user(np.code)   # the user matches it in their client to authorize once
 ```
 
-An app that already serves its own MCP surface can skip the separate mount and put the five
+An app that already serves its own MCP surface can skip the separate mount and put the
 tools straight on it with `channel.register_on(mcp)` — then the client that spawned the app
 services requests over the same connection, no second connector. This is the shape that
 replaces MCP sampling on the app's own surface.
 
-It is the same broker core and the same five tools as the daemon — only the faces differ:
+Wake-on-idle works here too, over MCP rather than the loopback wire:
+
+```
+switchboard listen --url https://my-app.example/switchboard/mcp
+```
+
+It polls `switchboard_waiting` — which reports what is queued **without taking it** — and
+prints the same lines as the local listener, so a hosted app's request reaches a session
+parked at the prompt. Run it under the same client watcher (in Claude Code, `Monitor`).
+
+It is the same broker core and the same tools as the daemon — only the faces differ:
 the app reaches the core in-process (`ask`), the user's client reaches it over the network.
 Still write-ahead, still transports-not-adjudicates.
 
