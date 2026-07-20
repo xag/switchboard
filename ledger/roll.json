@@ -30,6 +30,21 @@
     "digest": "0ca67aa95809"
   },
   {
+    "path": "hooks-nudge-the-agent-they-do-not-drive-it",
+    "kind": "decision",
+    "digest": "4fa62e839365"
+  },
+  {
+    "path": "hooks-nudge-the-agent-they-do-not-drive-it/alt-block-until-drained",
+    "kind": "alternative",
+    "digest": "e6f2c3090d65"
+  },
+  {
+    "path": "hooks-nudge-the-agent-they-do-not-drive-it/alt-daemon-drives-the-client",
+    "kind": "alternative",
+    "digest": "7153e3ee811b"
+  },
+  {
     "path": "one-shared-broker-per-user",
     "kind": "decision",
     "digest": "01f73f32003c"
@@ -58,6 +73,31 @@
     "path": "services-in-the-users-existing-session/alt-spawn-a-client",
     "kind": "alternative",
     "digest": "f603bf68b8c6"
+  },
+  {
+    "path": "share-pairing-rides-authorize",
+    "kind": "decision",
+    "digest": "7a22d5ee11da"
+  },
+  {
+    "path": "share-pairing-rides-authorize/alt-dedicated-link-secret",
+    "kind": "alternative",
+    "digest": "fb77e86ab034"
+  },
+  {
+    "path": "spawning-an-app-is-its-authorization",
+    "kind": "decision",
+    "digest": "0f0ddbdfb76e"
+  },
+  {
+    "path": "spawning-an-app-is-its-authorization/alt-ceremony-anyway",
+    "kind": "alternative",
+    "digest": "49abaaa7d3ed"
+  },
+  {
+    "path": "spawning-an-app-is-its-authorization/alt-hand-a-live-token",
+    "kind": "alternative",
+    "digest": "6c3739207312"
   },
   {
     "path": "the-channel-transports-it-does-not-adjudicate",

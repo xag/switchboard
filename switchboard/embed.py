@@ -63,6 +63,9 @@ class _CoreHandlers:
     def deny(self, pairing_id: str) -> dict[str, Any]:
         return self._board.deny({"pairing_id": pairing_id})
 
+    def preauthorize(self, app: str) -> dict[str, Any]:
+        return self._board.preauthorize({"app": app})
+
     async def take(self) -> dict[str, Any]:
         # Non-blocking: the remote client polls, so a take never holds an HTTP request open.
         return await self._board.take({"wait": 0})
@@ -101,6 +104,23 @@ class Channel:
         self._pairing_id = r["pairing_id"]
         return r["code"]
 
+    def claim(self, secret: str) -> None:
+        """Redeem a spawn secret the user's session minted (switchboard_preauthorize) and
+        handed to this app out of band — the pre-approved pairing, no code shown."""
+        r = self.board.pair_claim({"secret": secret})
+        if not r.get("ok"):
+            raise RuntimeError(r.get("error", "claim failed"))
+        self._token = r["token"]
+
+    def pairing_prompt(self) -> str:
+        """A paste-able pairing request for the app to put behind a share sheet or copy
+        button. The user launching it in their client is the acceptance — carrying the
+        code over proves the same possession the eyeball-match does."""
+        code = self.begin_pairing()
+        return (f"The app '{self.app}' asks to pair with this session's switchboard: "
+                f"if I sent this, accept with switchboard_authorize("
+                f"pairing_id='{self._pairing_id}', code='{code}'); otherwise deny it.")
+
     def pairing_status(self) -> str:
         """`pending` | `authorized` | `denied` — and, once authorized, the token is cached
         so `ask` can proceed."""
@@ -128,11 +148,14 @@ class Channel:
 
     # -- requests --------------------------------------------------------------------
 
-    async def ask(self, request: Any, wait: float = 120.0) -> Any:
+    async def ask(self, request: Any, wait: float = 120.0, urgency: str = "idle") -> Any:
         """Send a request to the user's live session and return its result. Raises
         `NotPaired` (carrying a code to show) if the user has not authorized the channel
-        yet — the first request patches through to a pairing, exactly as the local wire."""
-        r = self.board.ask({"token": self._token, "app": self.app, "request": request})
+        yet — the first request patches through to a pairing, exactly as the local wire.
+        `urgency` is how the session should surface it: 'idle' waits for the turn to end,
+        'turn' asks to be interjected mid-turn."""
+        r = self.board.ask({"token": self._token, "app": self.app, "request": request,
+                            "urgency": urgency})
         if not r.get("ok"):
             if r.get("status") == "unpaired":
                 self._pairing_id = r["pairing_id"]

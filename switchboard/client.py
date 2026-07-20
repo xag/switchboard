@@ -13,11 +13,15 @@ for the common case.
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any, Callable, Optional
 
 from . import discovery, protocol
 from .protocol import V
+
+# The convention for handing a spawn secret to an app the session launches itself.
+SECRET_ENV = "SWITCHBOARD_SECRET"
 
 
 class Stale(Exception):
@@ -38,11 +42,14 @@ class NotPaired(Exception):
 
 
 class App:
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, secret: Optional[str] = None) -> None:
         self.name = name
         self.token: Optional[str] = None
         self._info: Optional[dict] = None
         self._pairing_id: Optional[str] = None
+        # A spawn secret, if the session that launched this app minted one. Passed
+        # explicitly or found in the environment; `ask` redeems it on first use.
+        self._secret = secret if secret is not None else os.environ.get(SECRET_ENV)
 
     # -- liveness -------------------------------------------------------------------
 
@@ -75,6 +82,29 @@ class App:
         self._pairing_id = r["pairing_id"]
         return r["code"]
 
+    def claim(self, secret: Optional[str] = None) -> str:
+        """Redeem a spawn secret for a token — the pairing the session pre-approved when
+        it launched this app. Single use; a wrong or expired secret raises."""
+        s = secret or self._secret
+        if not s:
+            raise RuntimeError("no spawn secret to claim")
+        r = protocol.call(self._endpoint(), V.PAIR_CLAIM, secret=s)
+        self._secret = None  # consumed either way — the broker will not honor it again
+        if not r.get("ok"):
+            raise RuntimeError(r.get("error", "claim failed"))
+        self.token = r["token"]
+        return self.token
+
+    def pairing_prompt(self) -> str:
+        """A paste-able pairing request: one line the app can put behind a share sheet or
+        a copy button. The user launching it in their client is the acceptance — carrying
+        the code from the app's UI into the session proves the same possession the
+        eyeball-match does, and the code stays single-use and short-lived."""
+        code = self.begin_pairing()
+        return (f"The app '{self.name}' asks to pair with this session's switchboard: "
+                f"if I sent this, accept with switchboard_authorize("
+                f"pairing_id='{self._pairing_id}', code='{code}'); otherwise deny it.")
+
     def await_pairing(self, wait: float = 120.0, poll: float = 1.0) -> str:
         """Block until the user authorizes (or denies / times out), returning the token."""
         if not self._pairing_id:
@@ -93,11 +123,17 @@ class App:
 
     # -- requests -------------------------------------------------------------------
 
-    def ask(self, request: Any, wait: float = 120.0) -> Any:
+    def ask(self, request: Any, wait: float = 120.0, urgency: str = "idle") -> Any:
         """Send a request and return the client's result. Raises NotPaired if the app has
-        no valid token yet (the first request patches through to a pairing)."""
+        no valid token yet (the first request patches through to a pairing) — unless a
+        spawn secret is on hand, which is redeemed silently first. `urgency` is how the
+        session should surface the request: 'idle' waits for the turn to end, 'turn' asks
+        to be interjected mid-turn."""
         ep = self._endpoint()
-        r = protocol.call(ep, V.ASK, token=self.token, app=self.name, request=request)
+        if self.token is None and self._secret:
+            self.claim()
+        r = protocol.call(ep, V.ASK, token=self.token, app=self.name, request=request,
+                          urgency=urgency)
         if not r.get("ok"):
             if r.get("status") == "unpaired":
                 self._pairing_id = r["pairing_id"]

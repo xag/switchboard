@@ -2,6 +2,9 @@
 
     daemon          Run the broker in the foreground (the hook spawns this detached).
     hook            SessionStart hook: bring the shared daemon up idempotently, then exit.
+    hook-stop       Stop hook: hold the agent's stop while app requests are queued.
+    hook-post-tool  PostToolUse hook: surface urgency='turn' requests mid-turn.
+    hook-prompt     UserPromptSubmit hook: mention waiting requests and pairings.
     mcp             Serve the MCP surface on stdio (pairing + the return path).
     status          Print whether a live switchboard is reachable, and where.
 """
@@ -29,6 +32,10 @@ def main(argv: list[str]) -> int:
         except Exception as e:  # noqa: BLE001 — a down channel must not block the session
             print(f"switchboard: not started ({e})", file=sys.stderr)
         return 0
+
+    if cmd in ("hook-stop", "hook-post-tool", "hook-prompt"):
+        from .hooks import run
+        return run(cmd.removeprefix("hook-"))
 
     if cmd == "mcp":
         from .mcp_server import serve

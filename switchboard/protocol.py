@@ -26,10 +26,13 @@ class V:
     PAIR_STATUS = "pair_status"         # {pairing_id} -> {ok, status, token?}
     AUTHORIZE = "authorize"             # {pairing_id, code} -> {ok, token, app} | code mismatch
     DENY = "deny"                       # {pairing_id} -> {ok}
-    ASK = "ask"                         # {token, request} -> {ok, request_id} | {ok:false, status:"unpaired", ...}
+    PREAUTHORIZE = "preauthorize"       # {app} -> {ok, pairing_id, secret} (the user's session mints it)
+    PAIR_CLAIM = "pair_claim"           # {secret} -> {ok, token, app} (single use; skips the code)
+    ASK = "ask"                         # {token, request, urgency?} -> {ok, request_id} | {ok:false, status:"unpaired", ...}
     AWAIT_RESULT = "await_result"       # {request_id} (long-poll) -> {ok, status, result?}
-    TAKE = "take"                       # {} (long-poll) -> {ok, request_id, app, request} | {ok, empty:true}
+    TAKE = "take"                       # {} (long-poll) -> {ok, request_id, app, request, urgency} | {ok, empty:true}
     DELIVER = "deliver"                 # {request_id, result} -> {ok}
+    QUEUE_STATUS = "queue_status"       # -> {ok, queued, interject, pairings, apps} (cheap; hooks poll it)
 
 
 Endpoint = tuple[str, int]

@@ -72,6 +72,27 @@ def test_channel_needs_a_name():
         Channel("   ")
 
 
+def test_channel_claims_a_preauthorized_secret():
+    ch = Channel("hosted-notes", record=lambda e: None)
+    # The user's session minted the secret over the surface (switchboard_preauthorize)
+    # and handed it to the app out of band; the app claims and is simply paired.
+    pre = ch.board.preauthorize({"app": "hosted-notes"})
+    ch.claim(pre["secret"])
+    assert ch.paired
+    with pytest.raises(RuntimeError):
+        ch.claim(pre["secret"])  # single use
+
+
+def test_channel_pairing_prompt_carries_the_acceptance():
+    ch = Channel("hosted-notes", record=lambda e: None)
+    prompt = ch.pairing_prompt()
+    assert "hosted-notes" in prompt and ch._pairing_id in prompt
+    import re
+    code = re.search(r"code='(\d{6})'", prompt).group(1)
+    assert ch.board.authorize({"pairing_id": ch._pairing_id, "code": code})["ok"]
+    assert ch.pairing_status() == "authorized"
+
+
 # -- HTTP: the remote MCP surface, broker only in the app's process -------------------
 
 @pytest.fixture

@@ -38,8 +38,9 @@ class Pending:
     app: str
     code: str
     created: float
-    status: str = "pending"  # pending | authorized | denied
+    status: str = "pending"  # pending | preauthorized | authorized | denied
     token: Optional[str] = None
+    secret: Optional[str] = None  # set only while preauthorized; consumed by the claim
 
 
 @dataclass
@@ -47,6 +48,7 @@ class Req:
     request_id: str
     app: str
     request: Any
+    urgency: str = "idle"  # idle (wait for the turn to end) | turn (surface mid-turn)
     status: str = "queued"  # queued | taken | done
     result: Any = None
     fut: Optional[asyncio.Future] = None
@@ -58,6 +60,7 @@ class Switchboard:
         self._record: Record = record if record is not None else wal.append
         self.pending: dict[str, Pending] = {}     # pairing_id -> Pending (and authorized)
         self.by_token: dict[str, Pending] = {}    # token -> Pending
+        self.by_secret: dict[str, Pending] = {}   # spawn secret -> preauthorized Pending
         self.reqs: dict[str, Req] = {}            # request_id -> Req
         self.inbox: "asyncio.Queue[str]" = asyncio.Queue()
         self._rn = 0
@@ -136,6 +139,40 @@ class Switchboard:
                       "pairing_id": p.pairing_id, "app": p.app})
         return {"ok": True}
 
+    def preauthorize(self, msg: dict) -> dict:
+        """The user's session, about to spawn an app itself, mints a spawn secret. Minting
+        is the authorization — the session chose to launch this app — so the app redeems
+        the secret with `pair_claim` and no code is shown to anyone. The secret is single
+        use and expires like a pending code, so a leaked environment cannot pair later."""
+        app = (msg.get("app") or "").strip()
+        if not app:
+            return {"ok": False, "error": "name the app the secret is for"}
+        p = Pending(self._next_pairing_id(), app, f"{secrets.randbelow(1_000_000):06d}",
+                    time.time(), status="preauthorized",
+                    secret=secrets.token_urlsafe(24))
+        self.pending[p.pairing_id] = p
+        self.by_secret[p.secret] = p
+        self._record({"ts": time.time(), "event": "preauthorize",
+                      "pairing_id": p.pairing_id, "app": app})
+        return {"ok": True, "pairing_id": p.pairing_id, "secret": p.secret}
+
+    def pair_claim(self, msg: dict) -> dict:
+        """An app redeems a spawn secret for a token. One redemption per secret: the claim
+        consumes it, and a stale secret (older than PAIR_TTL) is refused."""
+        p = self.by_secret.pop(str(msg.get("secret", "")), None)
+        if p is None or p.status != "preauthorized":
+            return {"ok": False, "error": "no such spawn secret"}
+        if time.time() - p.created >= PAIR_TTL:
+            p.status = "denied"
+            return {"ok": False, "error": "spawn secret expired"}
+        p.status = "authorized"
+        p.secret = None
+        p.token = secrets.token_urlsafe(24)
+        self.by_token[p.token] = p
+        self._record({"ts": time.time(), "event": "claim",
+                      "pairing_id": p.pairing_id, "app": p.app})
+        return {"ok": True, "token": p.token, "app": p.app}
+
     # -- requests -------------------------------------------------------------------
 
     def ask(self, msg: dict) -> dict:
@@ -151,10 +188,13 @@ class Switchboard:
             return {"ok": False, "status": "unpaired",
                     "pairing_id": opened.pairing_id, "code": opened.code}
         rid = self._next_request_id()
-        req = Req(rid, p.app, msg.get("request"))
+        urgency = msg.get("urgency", "idle")
+        if urgency not in ("idle", "turn"):
+            return {"ok": False, "error": f"urgency must be 'idle' or 'turn', not {urgency!r}"}
+        req = Req(rid, p.app, msg.get("request"), urgency=urgency)
         # Write-ahead: the request is durable before it is queued to be serviced.
         self._record({"ts": time.time(), "event": "request", "request_id": rid,
-                      "app": p.app, "request": req.request})
+                      "app": p.app, "request": req.request, "urgency": urgency})
         req.fut = asyncio.get_running_loop().create_future()
         self.reqs[rid] = req
         self.inbox.put_nowait(rid)
@@ -187,7 +227,8 @@ class Switchboard:
         if not req:
             return {"ok": True, "empty": True}
         req.status = "taken"
-        return {"ok": True, "request_id": rid, "app": req.app, "request": req.request}
+        return {"ok": True, "request_id": rid, "app": req.app, "request": req.request,
+                "urgency": req.urgency}
 
     def deliver(self, msg: dict) -> dict:
         rid = msg.get("request_id", "")
@@ -201,6 +242,19 @@ class Switchboard:
         if req.fut and not req.fut.done():
             req.fut.set_result(req.result)
         return {"ok": True}
+
+    def queue_status(self) -> dict:
+        """The one cheap fact the hooks poll: is anything waiting, and how urgently.
+        `queued` counts requests not yet taken; `interject` the subset an app marked
+        urgency='turn'; `pairings` the codes awaiting the user."""
+        queued = [r for r in self.reqs.values() if r.status == "queued"]
+        now = time.time()
+        pairings = sum(1 for p in self.pending.values()
+                       if p.status == "pending" and now - p.created < PAIR_TTL)
+        return {"ok": True, "queued": len(queued),
+                "interject": sum(1 for r in queued if r.urgency == "turn"),
+                "pairings": pairings,
+                "apps": sorted({r.app for r in queued})}
 
     # -- dispatch -------------------------------------------------------------------
 
@@ -219,6 +273,12 @@ class Switchboard:
             return self.authorize(msg)
         if verb == V.DENY:
             return self.deny(msg)
+        if verb == V.PREAUTHORIZE:
+            return self.preauthorize(msg)
+        if verb == V.PAIR_CLAIM:
+            return self.pair_claim(msg)
+        if verb == V.QUEUE_STATUS:
+            return self.queue_status()
         if verb == V.ASK:
             return self.ask(msg)
         if verb == V.AWAIT_RESULT:

@@ -138,6 +138,66 @@ def test_deny_blocks_authorization(channel):
     assert after["ok"] is False
 
 
+# -- spawn-secret pre-approval --------------------------------------------------------
+
+def test_preauthorized_app_pairs_with_no_user_action(channel):
+    pre = protocol.call(channel, V.PREAUTHORIZE, app="spawned-notes")
+    assert pre["ok"] and pre["secret"]
+    # No code awaits the user: a preauthorized pairing is not an authorizable slot.
+    assert protocol.call(channel, V.PENDING_PAIRINGS)["pairings"] == []
+    claim = protocol.call(channel, V.PAIR_CLAIM, secret=pre["secret"])
+    assert claim["ok"] and claim["app"] == "spawned-notes"
+    # The token is a full pairing: requests flow.
+    r = protocol.call(channel, V.ASK, token=claim["token"], request={"q": 1})
+    assert r["ok"] and r["request_id"]
+
+
+def test_spawn_secret_is_single_use(channel):
+    pre = protocol.call(channel, V.PREAUTHORIZE, app="spawned-notes")
+    assert protocol.call(channel, V.PAIR_CLAIM, secret=pre["secret"])["ok"]
+    again = protocol.call(channel, V.PAIR_CLAIM, secret=pre["secret"])
+    assert again["ok"] is False
+
+
+def test_bogus_spawn_secret_is_refused(channel):
+    r = protocol.call(channel, V.PAIR_CLAIM, secret="nope")
+    assert r["ok"] is False
+
+
+def test_expired_spawn_secret_is_refused():
+    from switchboard.core import PAIR_TTL, Switchboard
+    board = Switchboard(record=lambda e: None)
+    pre = board.preauthorize({"app": "slow-spawn"})
+    board.pending[pre["pairing_id"]].created -= PAIR_TTL + 1
+    assert board.pair_claim({"secret": pre["secret"]})["ok"] is False
+
+
+# -- urgency and the queue-status fact -------------------------------------------------
+
+def test_urgency_rides_the_request_and_the_counts(channel):
+    token, _, _ = _authorize(channel, "notes")
+    protocol.call(channel, V.ASK, token=token, request={"q": 1}, urgency="turn")
+    protocol.call(channel, V.ASK, token=token, request={"q": 2})
+    st = protocol.call(channel, V.QUEUE_STATUS)
+    assert st["queued"] == 2 and st["interject"] == 1 and st["apps"] == ["notes"]
+    took = protocol.call(channel, V.TAKE, wait=2)
+    assert took["urgency"] == "turn"
+    st = protocol.call(channel, V.QUEUE_STATUS)
+    assert st["queued"] == 1 and st["interject"] == 0
+
+
+def test_bad_urgency_is_refused(channel):
+    token, _, _ = _authorize(channel, "notes")
+    r = protocol.call(channel, V.ASK, token=token, request={}, urgency="yesterday")
+    assert r["ok"] is False
+
+
+def test_queue_status_counts_waiting_pairings(channel):
+    assert protocol.call(channel, V.QUEUE_STATUS)["pairings"] == 0
+    protocol.call(channel, V.PAIR_REQUEST, app="notes")
+    assert protocol.call(channel, V.QUEUE_STATUS)["pairings"] == 1
+
+
 # -- client library over the same wire ------------------------------------------------
 
 def test_client_pair_and_ask(channel):
@@ -157,6 +217,33 @@ def test_client_pair_and_ask(channel):
     protocol.call(channel, V.DELIVER, request_id=took["request_id"], result={"a": 4})
     th.join(timeout=5)
     assert out["r"] == {"a": 4}
+
+
+def test_client_claims_spawn_secret_silently(channel):
+    pre = protocol.call(channel, V.PREAUTHORIZE, app="spawned-quiz")
+    app = App("spawned-quiz", secret=pre["secret"])
+
+    out = {}
+    th = threading.Thread(target=lambda: out.__setitem__("r", app.ask({"q": 3}, wait=5)))
+    th.start()
+    time.sleep(0.2)
+    took = protocol.call(channel, V.TAKE, wait=2)
+    assert took["app"] == "spawned-quiz"
+    protocol.call(channel, V.DELIVER, request_id=took["request_id"], result={"a": 9})
+    th.join(timeout=5)
+    assert out["r"] == {"a": 9}  # no code was ever shown
+
+
+def test_client_pairing_prompt_carries_the_acceptance(channel):
+    app = App("shared-notes")
+    prompt = app.pairing_prompt()
+    # The prompt names the app and carries exactly what the session needs to accept.
+    assert "shared-notes" in prompt and app._pairing_id in prompt
+    import re
+    code = re.search(r"code='(\d{6})'", prompt).group(1)
+    a = protocol.call(channel, V.AUTHORIZE, pairing_id=app._pairing_id, code=code)
+    assert a["ok"]
+    assert app.await_pairing(wait=3)
 
 
 def test_client_denied_pairing_raises(channel):

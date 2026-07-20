@@ -17,23 +17,36 @@ faithfully and keeps a record; it does not judge what an app sends.
 - **One shared daemon per user**, brought up by a `SessionStart` hook. It binds a loopback
   TCP port and publishes it in `~/.switchboard/switchboard.json`; any app and any session
   find it there.
-- **An app pairs once.** Its first request patches through to a pairing: the app shows a
-  code, the user authorizes it in their client (naming the app), and the code matched on
-  both sides confirms it. After that, requests flow without re-asking.
+- **An app pairs once**, one of three ways. The default ceremony: the app shows a code,
+  the user authorizes it in their client (naming the app), and the code matched on both
+  sides confirms it. An app **the session spawns itself** skips the ceremony — the session
+  mints a spawn secret (`switchboard_preauthorize`), hands it over in `SWITCHBOARD_SECRET`,
+  and the app redeems it once; launching it was the consent. An **external app** folds the
+  ceremony into a share: `pairing_prompt()` returns a paste-able line carrying the code,
+  and the user launching it in their session is the acceptance. After any of the three,
+  requests flow without re-asking.
 - **The user's session services requests** by calling the switchboard's MCP tools —
   `switchboard_take` pulls the next request, `switchboard_deliver` returns the result.
+- **Waiting requests nudge the agent** through the client's own lifecycle hooks: a stop is
+  held (once) while the queue is non-empty, a request sent with `urgency="turn"` is
+  surfaced mid-turn, and anything waiting rides in with the user's next prompt. The
+  channel still spawns nothing and drives no session.
 - **Liveness is a fact.** If the daemon dies, an app sees itself go `stale`.
 
 ## Use it
 
 Install (Python ≥ 3.11): `uv sync`.
 
-**1. Bring the daemon up at session start** — a `SessionStart` hook (shipped in
-`.claude/settings.json`):
+**1. Wire the hooks** (shipped in `.claude/settings.json`): `SessionStart` brings the
+daemon up idempotently, and `Stop` / `PostToolUse` / `UserPromptSubmit` surface waiting
+requests to the agent — each is one cheap frame to the daemon, and silence if it is down:
 
 ```json
-{ "hooks": { "SessionStart": [ { "hooks": [
-  { "type": "command", "command": "uv run python -m switchboard hook" } ] } ] } }
+{ "hooks": {
+  "SessionStart":     [ { "hooks": [ { "type": "command", "command": "uv run python -m switchboard hook" } ] } ],
+  "Stop":             [ { "hooks": [ { "type": "command", "command": "uv run python -m switchboard hook-stop" } ] } ],
+  "PostToolUse":      [ { "hooks": [ { "type": "command", "command": "uv run python -m switchboard hook-post-tool" } ] } ],
+  "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "uv run python -m switchboard hook-prompt" } ] } ] } }
 ```
 
 **2. Mount the MCP surface** — shipped in `.mcp.json`:
@@ -50,6 +63,12 @@ from switchboard.client import App
 app = App("my-app")
 answer = app.pair_and_ask({"question": "..."}, show_code=lambda c: print("pairing code:", c))
 ```
+
+If the session spawned the app with a spawn secret, `App("my-app")` finds it in
+`SWITCHBOARD_SECRET` and pairs silently on the first `ask`. An app pairing from the
+outside instead offers `app.pairing_prompt()` — one line the user pastes into their
+session to accept. `ask(..., urgency="turn")` asks to be surfaced mid-turn rather than
+at the next idle moment.
 
 Any language can speak the wire directly — see `switchboard/protocol.py` (newline-delimited
 JSON over the loopback port).

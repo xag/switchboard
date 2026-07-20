@@ -21,7 +21,8 @@ def build() -> Quern:
     quern = Quern(packages=[next(r for r in refs if r.name == "ledger")])
     quern = lib.effective(quern)
     quern.root.children = [_SINGLETON, _TRANSPORT, _PAIRING, _NEUTRAL, _WRITE_AHEAD,
-                           _EXISTING_SESSION, _CORE_IS_TRANSPORT_FREE, _EMBED_SELF_HOSTS]
+                           _EXISTING_SESSION, _CORE_IS_TRANSPORT_FREE, _EMBED_SELF_HOSTS,
+                           _SPAWN_SECRET, _HOOKS_NUDGE, _SHARE_RIDES_AUTHORIZE]
     return quern
 
 
@@ -170,6 +171,93 @@ _CORE_IS_TRANSPORT_FREE = Node(
              payload={"why": "Two copies of pairing and the return path drift apart; a fix "
                              "or a guard lands in one and not the other. The issue asked to "
                              "factor the core out precisely to avoid that."}),
+    ],
+)
+
+
+_SPAWN_SECRET = Node(
+    id="spawning-an-app-is-its-authorization",
+    kind="decision",
+    name="An app the session spawns itself pairs by redeeming a spawn secret the session "
+         "minted — the code ceremony is skipped because the consent already happened",
+    payload={
+        "rationale":
+            "The code matched on both sides proves to the user that the app asking is the "
+            "app shown. When the session itself launches the app, the same party sits on "
+            "both sides of that proof: choosing to spawn was the authorization. So "
+            "`switchboard_preauthorize` mints a single-use secret with the same TTL as a "
+            "pending code, the spawner hands it over (SWITCHBOARD_SECRET), and the app "
+            "redeems it once with `pair_claim` — recorded in the WAL like any authorize. "
+            "This does not weaken the never-silent rule: an app that was not handed a "
+            "secret still faces the full ceremony.",
+    },
+    children=[
+        Node(id="alt-ceremony-anyway", kind="alternative",
+             name="Run the code match even for apps the session spawns",
+             payload={"why": "Re-asks consent already given; a ceremony that is always "
+                             "rubber-stamped trains the user to click through the ones "
+                             "that matter."}),
+        Node(id="alt-hand-a-live-token", kind="alternative",
+             name="Pass a live token at spawn instead of a claimable secret",
+             payload={"why": "Token minting would leave the broker, and the redemption "
+                             "would leave no mark. A claim keeps minting inside, records "
+                             "the event, and bounds a leaked environment by single use "
+                             "plus TTL."}),
+    ],
+)
+
+
+_HOOKS_NUDGE = Node(
+    id="hooks-nudge-the-agent-they-do-not-drive-it",
+    kind="decision",
+    name="Waiting requests reach the agent through the client's own lifecycle hooks — a "
+         "held stop, a mid-turn note for urgency='turn', a line on the user's prompt — "
+         "never by switchboard driving a session",
+    payload={
+        "rationale":
+            "The daemon already listens in the background; what was missing was the nudge "
+            "toward the agent. Hooks are the one client-agnostic place to stand: Stop is "
+            "blocked (once — stop_hook_active passes the second) while requests wait, so "
+            "'idle' delivery means 'at the first idle moment'; PostToolUse injects only "
+            "what an app marked urgency='turn'; UserPromptSubmit mentions the rest. Each "
+            "is one cheap queue_status frame, and every failure degrades to silence — a "
+            "down channel never costs the user a turn.",
+    },
+    children=[
+        Node(id="alt-daemon-drives-the-client", kind="alternative",
+             name="Have the daemon wake or drive a client process itself",
+             payload={"why": "Binds the channel to one vendor's client and breaks "
+                             "services-in-the-users-existing-session — the daemon would "
+                             "become a second agent."}),
+        Node(id="alt-block-until-drained", kind="alternative",
+             name="Block every stop until the queue is empty",
+             payload={"why": "A request the agent cannot service would trap the session "
+                             "in an endless turn; blocking once surfaces the queue "
+                             "without taking the user hostage."}),
+    ],
+)
+
+
+_SHARE_RIDES_AUTHORIZE = Node(
+    id="share-pairing-rides-authorize",
+    kind="decision",
+    name="An external app pairs by handing the user a paste-able prompt that carries the "
+         "pairing_id and code — the same authorize verb, no second consent path",
+    payload={
+        "rationale":
+            "`pairing_prompt` folds the ceremony into one act: the user carrying the "
+            "prompt from the app's share sheet into their session proves the same "
+            "possession the eyeball match does, and launching it is the acceptance. The "
+            "code lands in the transcript, which is acceptable exactly because a code is "
+            "already single-use, short-lived, and bound to one pairing — properties the "
+            "matched-code decision established.",
+    },
+    children=[
+        Node(id="alt-dedicated-link-secret", kind="alternative",
+             name="Mint a distinct high-entropy link secret with its own verb",
+             payload={"why": "A second consent path drifts from authorize and doubles "
+                             "what the user must trust; the existing code already has "
+                             "the bounds that matter."}),
     ],
 )
 

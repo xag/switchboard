@@ -41,6 +41,9 @@ class _WireHandlers:
     def deny(self, pairing_id: str) -> dict[str, Any]:
         return protocol.call(_endpoint(), V.DENY, pairing_id=pairing_id)
 
+    def preauthorize(self, app: str) -> dict[str, Any]:
+        return protocol.call(_endpoint(), V.PREAUTHORIZE, app=app)
+
     def take(self) -> dict[str, Any]:
         return protocol.call(_endpoint(), V.TAKE, wait=0)
 
