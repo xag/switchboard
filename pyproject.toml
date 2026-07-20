@@ -10,6 +10,11 @@ requires-python = ">=3.11"
 # runtime state (the switchboard brokers messages, it is not a quern tree).
 dependencies = ["mcp>=1.28", "flight-recorder"]
 
+# The CLI on PATH, so a hook can name an absolute command instead of `uv run python -m
+# switchboard` — which only ever resolved while the session sat in this project.
+[project.scripts]
+switchboard = "switchboard.__main__:cli"
+
 [dependency-groups]
 # The design ledger — the channel's own decisions as data a rule can go red on.
 #     uv run --group ledger python -m ledger.check

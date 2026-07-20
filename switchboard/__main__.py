@@ -1,5 +1,8 @@
-"""python -m switchboard <command>
+"""switchboard <command>   (or: python -m switchboard <command>)
 
+    install-hooks   Wire the hooks into a client's settings, so every session has the
+                    channel. --user (default) or --project [PATH]; --dry-run to look.
+    uninstall-hooks Remove them again from the same place.
     daemon          Run the broker in the foreground (the hook spawns this detached).
     hook            SessionStart hook: bring the shared daemon up idempotently, then exit.
     hook-stop       Stop hook: hold the agent's stop while app requests are queued.
@@ -18,8 +21,57 @@ import json
 import sys
 
 
+def _install_cmd(cmd: str, argv: list[str]) -> int:
+    """`install-hooks` / `uninstall-hooks`, with the target named explicitly."""
+    from pathlib import Path
+
+    from .install import install, settings_path, uninstall
+
+    dry = "--dry-run" in argv
+    rest = [a for a in argv if a != "--dry-run"]
+    project: Path | None = None
+    if "--project" in rest:
+        i = rest.index("--project")
+        after = rest[i + 1:]
+        project = Path(after[0]) if after and not after[0].startswith("-") else Path.cwd()
+    try:
+        path = settings_path(user=project is None, project=project)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+
+    try:
+        if cmd == "install-hooks":
+            changes = install(path, dry_run=dry)
+            for event, action, command in changes:
+                print(f"{'would ' if dry and action != 'keep' else ''}{action:6s} "
+                      f"{event}: {command}")
+            print(f"\n{'(dry run) ' if dry else ''}{path}")
+            if not dry:
+                print("Hooks active from the next session. Undo with: "
+                      "switchboard uninstall-hooks"
+                      + (f" --project {project}" if project else ""))
+        else:
+            removed = uninstall(path, dry_run=dry)
+            print(f"{'would remove ' if dry else 'removed '}"
+                  f"{', '.join(removed) if removed else 'nothing (none installed)'}")
+            print(f"{path}")
+    except RuntimeError as e:  # a settings file we must not clobber
+        print(str(e), file=sys.stderr)
+        return 1
+    return 0
+
+
+def cli() -> int:
+    """Console-script entry point (`switchboard ...`), from [project.scripts]."""
+    return main(sys.argv[1:])
+
+
 def main(argv: list[str]) -> int:
     cmd = argv[0] if argv else "status"
+
+    if cmd in ("install-hooks", "uninstall-hooks"):
+        return _install_cmd(cmd, argv[1:])
 
     if cmd == "daemon":
         from .daemon import run

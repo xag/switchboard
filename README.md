@@ -44,17 +44,22 @@ faithfully and keeps a record; it does not judge what an app sends.
 
 Install (Python ≥ 3.11): `uv sync`.
 
-**1. Wire the hooks** (shipped in `.claude/settings.json`): `SessionStart` brings the
-daemon up idempotently, and `Stop` / `PostToolUse` / `UserPromptSubmit` surface waiting
-requests to the agent — each is one cheap frame to the daemon, and silence if it is down:
+**1. Wire the hooks** — one command, and every session has the channel:
 
-```json
-{ "hooks": {
-  "SessionStart":     [ { "hooks": [ { "type": "command", "command": "uv run python -m switchboard hook" } ] } ],
-  "Stop":             [ { "hooks": [ { "type": "command", "command": "uv run python -m switchboard hook-stop" } ] } ],
-  "PostToolUse":      [ { "hooks": [ { "type": "command", "command": "uv run python -m switchboard hook-post-tool" } ] } ],
-  "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "uv run python -m switchboard hook-prompt" } ] } ] } }
 ```
+switchboard install-hooks              # the user's client settings (~/.claude)
+switchboard install-hooks --project .  # or just this project
+switchboard install-hooks --dry-run    # look first; undo with uninstall-hooks
+```
+
+It merges four entries into the settings file and touches nothing else (a `.bak` is kept):
+`SessionStart` brings the daemon up idempotently and asks the agent to arm the listener;
+`Stop` / `PostToolUse` / `UserPromptSubmit` surface waiting requests. Each is one cheap
+frame to the daemon, and silence if it is down.
+
+Installing the package never writes these by itself. Arranging to run code on someone's
+every prompt is a decision to make out loud, so it is a command you run — a channel that
+spawns nothing does not get to install itself either.
 
 **2. Mount the MCP surface** — shipped in `.mcp.json`:
 
