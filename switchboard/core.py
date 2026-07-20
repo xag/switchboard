@@ -244,9 +244,10 @@ class Switchboard:
         return {"ok": True}
 
     def queue_status(self) -> dict:
-        """The one cheap fact the hooks poll: is anything waiting, and how urgently.
-        `queued` counts requests not yet taken; `interject` the subset an app marked
-        urgency='turn'; `pairings` the codes awaiting the user."""
+        """The one cheap fact the hooks poll and the listener watches: what is waiting,
+        and how urgently. `queued` counts requests not yet taken; `interject` the subset
+        an app marked urgency='turn'; `pairings` the codes awaiting the user; `waiting`
+        names them, so a listener can tell a new request from one it already announced."""
         queued = [r for r in self.reqs.values() if r.status == "queued"]
         now = time.time()
         pairings = sum(1 for p in self.pending.values()
@@ -254,7 +255,9 @@ class Switchboard:
         return {"ok": True, "queued": len(queued),
                 "interject": sum(1 for r in queued if r.urgency == "turn"),
                 "pairings": pairings,
-                "apps": sorted({r.app for r in queued})}
+                "apps": sorted({r.app for r in queued}),
+                "waiting": [{"request_id": r.request_id, "app": r.app,
+                             "urgency": r.urgency} for r in queued]}
 
     # -- dispatch -------------------------------------------------------------------
 

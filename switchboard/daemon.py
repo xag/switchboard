@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -26,7 +27,8 @@ from typing import Any
 from . import __version__, discovery
 from .core import PAIR_TTL, Pending, Req, Switchboard  # re-exported for callers and tests
 
-__all__ = ["Switchboard", "Pending", "Req", "PAIR_TTL", "run", "spawn", "ensure_running"]
+__all__ = ["Switchboard", "Pending", "Req", "PAIR_TTL", "run", "spawn", "ensure_running",
+           "popen_detached"]
 
 
 # -- the server ---------------------------------------------------------------------
@@ -90,23 +92,49 @@ def run() -> int:
 
 # -- idempotent spawn ---------------------------------------------------------------
 
-def spawn() -> None:
-    """Start the daemon as a detached background process that outlives its spawner.
+# Windows creation flags. CREATE_NO_WINDOW rather than DETACHED_PROCESS: both spare the
+# child a console, but DETACHED_PROCESS lets a console *appear* when the launcher is
+# itself a console exe (`uv run` shows a black terminal that way). CREATE_BREAKAWAY_FROM_JOB
+# is what actually makes "outlives its spawner" true: a process spawned by a member of a
+# Windows job object joins that job, and a job with KILL_ON_JOB_CLOSE takes its members
+# down when the spawner dies — DETACHED_PROCESS does not escape a job, only breakaway does.
+_NO_WINDOW = 0x08000000          # subprocess.CREATE_NO_WINDOW
+_NEW_GROUP = 0x00000200          # subprocess.CREATE_NEW_PROCESS_GROUP
+_BREAKAWAY = 0x01000000          # subprocess.CREATE_BREAKAWAY_FROM_JOB
 
-    DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP on Windows, start_new_session on POSIX;
-    stdio to DEVNULL so a full pipe never blocks the child (the hook gotcha). The daemon
-    writes its own log to ~/.switchboard/daemon.log."""
-    discovery.ensure_home()
-    args = [sys.executable, "-m", "switchboard", "daemon"]
+
+def popen_detached(args: list[str], **extra: Any) -> subprocess.Popen:
+    """Launch a process that outlives this one and shows no console.
+
+    Breakaway is attempted first and retried without it on failure: a job that permits
+    neither explicit nor silent breakaway fails CreateProcess with ACCESS_DENIED, and a
+    child inside the job still beats no child at all."""
     kw: dict[str, Any] = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
                           "stderr": subprocess.DEVNULL, "close_fds": True,
-                          "cwd": str(Path.home())}
-    if os.name == "nt":
-        kw["creationflags"] = (subprocess.DETACHED_PROCESS
-                               | subprocess.CREATE_NEW_PROCESS_GROUP)
-    else:
+                          "cwd": str(Path.home()), **extra}
+    if os.name != "nt":
         kw["start_new_session"] = True
-    subprocess.Popen(args, **kw)
+        return subprocess.Popen(args, **kw)
+    try:
+        return subprocess.Popen(
+            args, creationflags=_NO_WINDOW | _NEW_GROUP | _BREAKAWAY, **kw)
+    except OSError:
+        return subprocess.Popen(args, creationflags=_NO_WINDOW | _NEW_GROUP, **kw)
+
+
+def spawn() -> None:
+    """Start the daemon as a background process that outlives its spawner.
+
+    stdio to DEVNULL so a full pipe never blocks the child (the hook gotcha); the daemon
+    writes its own log to ~/.switchboard/daemon.log. Launched through `uv run` when uv is
+    on PATH: in a uv venv `sys.executable` is a trampoline that re-executes the base
+    interpreter, and a trampoline whose parent dies mid-launch dies with it."""
+    discovery.ensure_home()
+    uv = shutil.which("uv")
+    root = Path(__file__).resolve().parents[1]
+    args = ([uv, "run", "--project", str(root), "python", "-m", "switchboard", "daemon"]
+            if uv else [sys.executable, "-m", "switchboard", "daemon"])
+    popen_detached(args)
 
 
 def ensure_running(timeout: float = 8.0) -> dict:

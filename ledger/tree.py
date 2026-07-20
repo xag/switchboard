@@ -22,7 +22,8 @@ def build() -> Quern:
     quern = lib.effective(quern)
     quern.root.children = [_SINGLETON, _TRANSPORT, _PAIRING, _NEUTRAL, _WRITE_AHEAD,
                            _EXISTING_SESSION, _CORE_IS_TRANSPORT_FREE, _EMBED_SELF_HOSTS,
-                           _SPAWN_SECRET, _HOOKS_NUDGE, _SHARE_RIDES_AUTHORIZE]
+                           _SPAWN_SECRET, _HOOKS_NUDGE, _SHARE_RIDES_AUTHORIZE,
+                           _LISTENER, _TOLERATE_OLDER_DAEMON, _CHANNEL_DEATH_IS_TOLD]
     return quern
 
 
@@ -238,6 +239,80 @@ _HOOKS_NUDGE = Node(
 )
 
 
+_LISTENER = Node(
+    id="a-listener-reaches-the-idle-session",
+    kind="decision",
+    name="A listener process announces each queued request on stdout, so a request reaches "
+         "a session parked at the prompt — it announces, it never consumes",
+    payload={
+        "supersedes":
+            "hooks-nudge-the-agent-they-do-not-drive-it, whose rationale claims hooks are "
+            "'the one client-agnostic place to stand'. That claim is false and this entry "
+            "corrects it: a hook fires only on an event the client already generates, so a "
+            "session parked at the prompt hears nothing until the user speaks. The hooks "
+            "decision stands for the active session; it never covered the idle one. The "
+            "error survived review and was caught only when a user clicked a demo button "
+            "four times and nothing happened.",
+        "rationale":
+            "Issue 4 asked for a background process that 'wakes up the agent if idle', and "
+            "the hooks cannot: they fire only inside a turn. `switchboard listen` runs "
+            "outside the turn loop and prints one line per new request; the client watches "
+            "that stdout, and a line arriving while the session is idle reaches the agent "
+            "on its own. It only announces — `take` stays the agent's act over MCP, so a "
+            "request is still written ahead, taken once, and delivered by the session. "
+            "switchboard still spawns nothing and drives no client: it writes a line and "
+            "the client decides what that is worth.",
+        "note":
+            "The arming is the client's, not a hook's: a SessionStart hook can start a "
+            "process, but nothing would read its stdout, and an unread listener is no "
+            "better than the silence it replaced. In Claude Code the agent arms it with "
+            "the Monitor tool. A client with no way to watch a stream keeps the hooks and "
+            "loses only the idle case.",
+    },
+    children=[
+        Node(id="alt-listener-takes-the-request", kind="alternative",
+             name="Let the listener take requests and hand them over pre-serviced",
+             payload={"why": "Then the queue is drained by something that cannot answer, "
+                             "and take-once moves out of the session's hands. Announcing "
+                             "keeps every guarantee the return path already had."}),
+        Node(id="alt-hook-spawns-the-listener", kind="alternative",
+             name="Have the SessionStart hook spawn the listener detached",
+             payload={"why": "A detached process's stdout reaches nobody, so it would "
+                             "wake no one — the appearance of the feature without the "
+                             "fact of it."}),
+    ],
+)
+
+
+_TOLERATE_OLDER_DAEMON = Node(
+    id="a-client-tolerates-an-older-daemon",
+    kind="decision",
+    name="A newer client meeting an older daemon degrades to what that daemon can say, and "
+         "says so — it never goes silently mute",
+    payload={
+        "rationale":
+            "One shared daemon per user outlives the sessions it serves, so a client "
+            "carrying today's code routinely meets a daemon started days ago. The listener "
+            "reads `waiting` when the daemon offers it and falls back to the counts every "
+            "vintage reports when it does not. Being vaguer is a cost; being silent is a "
+            "defect, because silence is indistinguishable from 'nothing is waiting'.",
+        "note":
+            "Written after the failure it names: the first listener read a queue_status "
+            "field the running daemon predated, so it polled a shape that was never there "
+            "and printed nothing for three clicks. The same mixed-vintage fault appeared "
+            "three times in one session — a stale MCP surface, a stale daemon, a stale "
+            "field — which is what makes it a design stance and not a patch.",
+    },
+    children=[
+        Node(id="alt-require-a-matching-daemon", kind="alternative",
+             name="Refuse to run against a daemon older than the client",
+             payload={"why": "Turns every upgrade into a forced restart that drops live "
+                             "pairings and queued requests, to avoid a degradation the "
+                             "client can simply describe."}),
+    ],
+)
+
+
 _SHARE_RIDES_AUTHORIZE = Node(
     id="share-pairing-rides-authorize",
     kind="decision",
@@ -258,6 +333,34 @@ _SHARE_RIDES_AUTHORIZE = Node(
              payload={"why": "A second consent path drifts from authorize and doubles "
                              "what the user must trust; the existing code already has "
                              "the bounds that matter."}),
+    ],
+)
+
+
+_CHANNEL_DEATH_IS_TOLD = Node(
+    id="a-replaced-channel-is-reported-not-papered-over",
+    kind="decision",
+    name="The user-side surface remembers the daemon's nonce: if the channel it was using "
+         "died and a new one took its place, the caller is told, never handed a fresh "
+         "empty queue",
+    payload={
+        "rationale":
+            "The MCP surface starts a daemon when none answers, which is right for a first "
+            "call and wrong for a replacement: pairings and the queue live in memory and "
+            "die with the process. Reporting `channel: 'replaced'` keeps liveness a fact at "
+            "the surface, the way the client library already clears an app's token on a "
+            "nonce change. A down daemon is likewise an error, not an empty result.",
+        "note":
+            "The failure that earned it: a daemon died holding a queued request, `take` "
+            "quietly started a replacement, and answered `empty` one line after the Stop "
+            "hook had said a request was waiting. An empty queue reads as 'nothing was "
+            "waiting', which is the one thing it was not.",
+    },
+    children=[
+        Node(id="alt-silently-restart", kind="alternative",
+             name="Start a replacement daemon and answer from it as if nothing happened",
+             payload={"why": "Makes the surface lie in the exact case the record exists "
+                             "to explain — a lost request looks like no request."}),
     ],
 )
 

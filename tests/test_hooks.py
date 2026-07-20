@@ -61,6 +61,38 @@ def test_prompt_is_silent_when_nothing_waits():
     assert prompt_context(_status()) is None
 
 
+# -- a replaced channel is reported, never papered over -------------------------------
+
+def test_take_reports_a_replaced_daemon_instead_of_an_empty_queue(monkeypatch):
+    """The bug this earns its keep against: a daemon dies holding queued requests, the
+    surface silently starts a fresh one, and `take` answers `empty` — which the session
+    reads as 'nothing was waiting' one line after a hook said something was."""
+    from switchboard import discovery, mcp_server
+
+    live = {"host": "127.0.0.1", "port": 1, "nonce": "first"}
+    monkeypatch.setattr(discovery, "alive", lambda *a, **k: live)
+    monkeypatch.setattr(mcp_server, "_last_nonce", None, raising=False)
+
+    # First contact establishes which switchboard this surface is speaking to.
+    assert mcp_server._endpoint() == ("127.0.0.1", 1)
+
+    # The daemon dies and a replacement takes its place — a different nonce.
+    live["nonce"] = "second"
+    out = mcp_server._WireHandlers().take()
+    assert out["ok"] is False and out["channel"] == "replaced"
+    assert "queued requests went with it" in out["error"]
+
+
+def test_a_down_daemon_is_an_error_not_a_silent_empty(monkeypatch):
+    from switchboard import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_endpoint", lambda: ("127.0.0.1", 9))
+    monkeypatch.setattr(mcp_server.protocol, "call",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("refused")))
+    out = mcp_server._WireHandlers().take()
+    assert out["ok"] is False and out["channel"] == "down"
+
+
 # -- a down channel is silence, never an error ----------------------------------------
 
 def test_no_daemon_means_no_output(tmp_path, monkeypatch):

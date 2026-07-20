@@ -3,6 +3,10 @@
     "switchboard": {
       "command": "uv",
       "args": ["run", "python", "-m", "switchboard", "mcp"]
+    },
+    "switchboard-demos": {
+      "command": "uv",
+      "args": ["run", "python", "demos/switchboard_demos_mcp.py"]
     }
   }
 }

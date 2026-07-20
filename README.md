@@ -27,10 +27,15 @@ faithfully and keeps a record; it does not judge what an app sends.
   requests flow without re-asking.
 - **The user's session services requests** by calling the switchboard's MCP tools —
   `switchboard_take` pulls the next request, `switchboard_deliver` returns the result.
-- **Waiting requests nudge the agent** through the client's own lifecycle hooks: a stop is
-  held (once) while the queue is non-empty, a request sent with `urgency="turn"` is
-  surfaced mid-turn, and anything waiting rides in with the user's next prompt. The
-  channel still spawns nothing and drives no session.
+- **Waiting requests nudge the agent** two ways, because one is not enough. The client's
+  own lifecycle hooks cover an *active* session: a stop is held (once) while the queue is
+  non-empty, a request sent with `urgency="turn"` is surfaced mid-turn, and anything
+  waiting rides in with the user's next prompt. But a hook only fires on an event the
+  client already generates, so a session parked at the prompt hears nothing — for that,
+  **`python -m switchboard listen`** prints one line per queued request and the client
+  watches its stdout (in Claude Code, the `Monitor` tool). It announces and never
+  consumes: `take` stays the agent's act. The channel still spawns nothing and drives no
+  session.
 - **Liveness is a fact.** If the daemon dies, an app sees itself go `stale`.
 
 ## Use it

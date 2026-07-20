@@ -1,5 +1,15 @@
 [
   {
+    "path": "a-client-tolerates-an-older-daemon",
+    "kind": "decision",
+    "digest": "6076ceaca9af"
+  },
+  {
+    "path": "a-client-tolerates-an-older-daemon/alt-require-a-matching-daemon",
+    "kind": "alternative",
+    "digest": "e01d9914e1de"
+  },
+  {
     "path": "a-hosted-app-self-hosts-its-channel",
     "kind": "decision",
     "digest": "d65244015471"
@@ -8,6 +18,31 @@
     "path": "a-hosted-app-self-hosts-its-channel/alt-hosted-relay",
     "kind": "alternative",
     "digest": "8ad65cce9ffe"
+  },
+  {
+    "path": "a-listener-reaches-the-idle-session",
+    "kind": "decision",
+    "digest": "50ff9c0f050e"
+  },
+  {
+    "path": "a-listener-reaches-the-idle-session/alt-hook-spawns-the-listener",
+    "kind": "alternative",
+    "digest": "70f6528a21ee"
+  },
+  {
+    "path": "a-listener-reaches-the-idle-session/alt-listener-takes-the-request",
+    "kind": "alternative",
+    "digest": "a09710f1deaf"
+  },
+  {
+    "path": "a-replaced-channel-is-reported-not-papered-over",
+    "kind": "decision",
+    "digest": "1a0fc0ffd020"
+  },
+  {
+    "path": "a-replaced-channel-is-reported-not-papered-over/alt-silently-restart",
+    "kind": "alternative",
+    "digest": "ea22f5bb201c"
   },
   {
     "path": "broker-core-is-transport-free",

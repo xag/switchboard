@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from typing import Optional
 
 from . import discovery, protocol
@@ -90,6 +91,65 @@ def prompt_context(status: Optional[dict]) -> Optional[dict]:
     return {"hookSpecificOutput": {
         "hookEventName": "UserPromptSubmit",
         "additionalContext": "switchboard: " + "; ".join(parts) + "."}}
+
+
+def listen(poll: float = 1.0) -> int:
+    """The listener: one stdout line per app request, for as long as it runs.
+
+    This is the active half of the nudge, and the passive hooks cannot replace it. A hook
+    only fires on an event the client already generates — a tool call, a stop, a user
+    message — so a session parked at the prompt hears nothing until the user speaks. A
+    listener runs outside the turn loop: the client watches its stdout, and a line arriving
+    while the session is idle reaches the agent on its own. That is what 'wakes up the
+    agent if idle' means, and it is the only thing here that does it.
+
+    It announces; it never consumes. `take` stays the agent's act over MCP, so a request is
+    still written ahead, still taken once, and still delivered by the session — the listener
+    only says that something is there. Emissions are deduplicated per daemon lifetime; a
+    replaced daemon (new nonce) resets that memory, because its request ids start over."""
+    seen: set[str] = set()
+    nonce: Optional[str] = None
+    while True:
+        info = discovery.alive(timeout=2.0)
+        if info is None:
+            # A dead channel is quiet, not chatty: it recovers, and the hooks still cover
+            # the events that do fire. Forget nothing — a restart is caught by the nonce.
+            time.sleep(poll)
+            continue
+        if info.get("nonce") != nonce:
+            nonce, seen = info.get("nonce"), set()
+        try:
+            status = protocol.call(discovery.endpoint_of(info), V.QUEUE_STATUS,
+                                   timeout=2.0)
+        except OSError:
+            time.sleep(poll)
+            continue
+        waiting = status.get("waiting")
+        if waiting is None:
+            # An older daemon predates `waiting` and reports only counts. The channel is
+            # shared and long-lived, so a newer client meeting an older daemon is normal,
+            # not an error — announce on the rise from empty rather than go mute. Being
+            # vaguer than the identified path beats the silence that hid this bug.
+            if status.get("queued", 0) and not seen:
+                seen.add("counted")
+                print(f"switchboard: {status['queued']} request(s) waiting from "
+                      f"{', '.join(status.get('apps') or ['an app'])} - service with "
+                      f"switchboard_take, then switchboard_deliver.", flush=True)
+            elif not status.get("queued", 0):
+                seen.discard("counted")
+            time.sleep(poll)
+            continue
+        for req in waiting:
+            rid = req["request_id"]
+            if rid in seen:
+                continue
+            seen.add(rid)
+            # ASCII only: this line crosses a console pipe, and a cp1252 console mangles
+            # anything prettier (the same lesson ledger/check.py records).
+            print(f"switchboard: {req['app']} sent request {rid} "
+                  f"(urgency={req['urgency']}) - service it with switchboard_take, "
+                  f"then switchboard_deliver.", flush=True)
+        time.sleep(poll)
 
 
 def run(event: str) -> int:

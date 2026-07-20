@@ -5,6 +5,9 @@
     hook-stop       Stop hook: hold the agent's stop while app requests are queued.
     hook-post-tool  PostToolUse hook: surface urgency='turn' requests mid-turn.
     hook-prompt     UserPromptSubmit hook: mention waiting requests and pairings.
+    listen          Announce each app request on stdout, one line apiece, until stopped.
+                    Run under a client watcher (Monitor) so a request reaches the agent
+                    even while the session sits idle — the hooks cannot do that alone.
     mcp             Serve the MCP surface on stdio (pairing + the return path).
     status          Print whether a live switchboard is reachable, and where.
 """
@@ -36,6 +39,13 @@ def main(argv: list[str]) -> int:
     if cmd in ("hook-stop", "hook-post-tool", "hook-prompt"):
         from .hooks import run
         return run(cmd.removeprefix("hook-"))
+
+    if cmd == "listen":
+        from .hooks import listen
+        try:
+            return listen()
+        except KeyboardInterrupt:
+            return 0
 
     if cmd == "mcp":
         from .mcp_server import serve

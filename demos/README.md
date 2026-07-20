@@ -12,6 +12,24 @@ it here).
 | Share-prompt: the app hands over a paste-able line | `pair_share.py` | Paste the line into the session — the paste is the acceptance |
 | Urgency: mid-turn vs next-idle delivery | `urgency.py` | Authorize once, then watch `take` report each request's urgency |
 | Embedded channel: a hosted app, no local daemon | `hosted_notes.py` | Add the printed URL as a remote MCP connector once, then the ceremony as usual |
+| MCP app: the session spawns the app via a tool | `switchboard_demos_mcp.py` | Call the tool — that is the consent; the app arrives already paired |
+
+## The switchboard-demos MCP server
+
+`switchboard_demos_mcp.py` puts the demos behind MCP tools (mounted by `.mcp.json` as
+`switchboard-demos`) — the issue-4 "MCP app" shape, where calling the tool is the consent
+and the spawned app arrives pre-approved:
+
+- **`demo_button_app()`** spawns `button_app.py`: a window with the same prompt behind two
+  buttons, differing only in urgency — **Send mid-turn** (`urgency="turn"`, surfaced
+  between tool calls) and **Send at next idle** (`urgency="idle"`, held at the stop
+  boundary). The delivered answer lands back in the window, labelled with the urgency that
+  carried it. Arm `switchboard listen` first (see the main README) or a click made while
+  the session sits parked will wait until the user next types.
+- **`demo_idle_message(message, delay_seconds=0)`** dispatches `idle_messenger.py`: the
+  message rides with `urgency="idle"`, so it interrupts nothing — it waits for the
+  session's next idle moment (the held stop, or the next prompt), when the agent posts it
+  visibly to the user and delivers an acknowledgement back.
 
 ```
 uv run python demos/pair_code.py "In one word: capital of France?"
