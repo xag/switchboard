@@ -44,8 +44,10 @@ class NotPaired(Exception):
 
 class App:
     def __init__(self, name: str, secret: Optional[str] = None,
-                 token_store: Optional[Path] = None, remember: bool = True) -> None:
+                 token_store: Optional[Path] = None, remember: bool = True,
+                 autostart: bool = True) -> None:
         self.name = name
+        self._autostart = autostart
         self._info: Optional[dict] = None
         self._pairing_id: Optional[str] = None
         # A spawn secret, if the session that launched this app minted one. Passed
@@ -89,8 +91,30 @@ class App:
             return discovery.alive() is None
         return discovery.alive(info=self._info) is None
 
+    def _call(self, verb: str, **fields: Any) -> dict:
+        """One frame, with a dead channel reported as `Stale` rather than a socket error.
+
+        A daemon that dies mid-request drops the connection, and an app that asked for a
+        result got a bare ConnectionResetError traceback for its trouble. `Stale` is the
+        fact the app can actually act on — the same one `stale` reports — so both routes
+        to 'the channel is gone' arrive as the same exception."""
+        try:
+            return protocol.call(self._endpoint(), verb, **fields)
+        except OSError as e:
+            raise Stale(f"the switchboard stopped answering: {e}") from e
+
     def _endpoint(self) -> protocol.Endpoint:
         info = discovery.alive()
+        if not info and self._autostart:
+            # The daemon is a shared, idempotent, per-user service, and the user-side MCP
+            # server already starts it on demand. An app finding none may do the same:
+            # a pairing now survives a restart, so recovery is a restart and a retry
+            # rather than the whole ceremony again.
+            try:
+                from . import daemon
+                info = daemon.ensure_running()
+            except Exception:  # noqa: BLE001 — report the channel as down, not this
+                info = None
         if not info:
             raise Stale("no live switchboard")
         # A restarted daemon no longer invalidates the token: the user's decision is kept
@@ -105,7 +129,7 @@ class App:
     def begin_pairing(self) -> str:
         """Open a pairing and return the code to show the user. The user matches it in
         their client and authorizes there."""
-        r = protocol.call(self._endpoint(), V.PAIR_REQUEST, app=self.name)
+        r = self._call(V.PAIR_REQUEST, app=self.name)
         if not r.get("ok"):
             raise RuntimeError(r.get("error", "pair_request failed"))
         self._pairing_id = r["pairing_id"]
@@ -117,7 +141,7 @@ class App:
         s = secret or self._secret
         if not s:
             raise RuntimeError("no spawn secret to claim")
-        r = protocol.call(self._endpoint(), V.PAIR_CLAIM, secret=s)
+        r = self._call(V.PAIR_CLAIM, secret=s)
         self._secret = None  # consumed either way — the broker will not honor it again
         if not r.get("ok"):
             raise RuntimeError(r.get("error", "claim failed"))
@@ -141,8 +165,7 @@ class App:
             raise RuntimeError("begin_pairing first")
         deadline = time.time() + wait
         while time.time() < deadline:
-            s = protocol.call(self._endpoint(), V.PAIR_STATUS,
-                              pairing_id=self._pairing_id)
+            s = self._call(V.PAIR_STATUS, pairing_id=self._pairing_id)
             if s.get("status") == "authorized":
                 self.token = s["token"]
                 self._save_token(self.token)
@@ -160,33 +183,57 @@ class App:
         spawn secret is on hand, which is redeemed silently first. `urgency` is how the
         session should surface the request: 'idle' waits for the turn to end, 'turn' asks
         to be interjected mid-turn."""
-        ep = self._endpoint()
         if self.token is None and self._secret:
             self.claim()
-        r = protocol.call(ep, V.ASK, token=self.token, app=self.name, request=request,
-                          urgency=urgency)
+        r = self._call(V.ASK, token=self.token, app=self.name, request=request,
+                       urgency=urgency)
         if not r.get("ok"):
             if r.get("status") == "unpaired":
                 self._pairing_id = r["pairing_id"]
                 # An allowlisted app's pairing opens already authorized, so the token is
                 # there to be collected — take it and go, rather than raise NotPaired at
                 # a caller who was pre-approved precisely so it need not handle this.
-                s = protocol.call(ep, V.PAIR_STATUS, pairing_id=r["pairing_id"])
+                s = self._call(V.PAIR_STATUS, pairing_id=r["pairing_id"])
                 if s.get("status") == "authorized":
                     self.token = s["token"]
                     self._save_token(self.token)
-                    r = protocol.call(ep, V.ASK, token=self.token, app=self.name,
-                                      request=request, urgency=urgency)
+                    r = self._call(V.ASK, token=self.token, app=self.name,
+                                   request=request, urgency=urgency)
                 if not r.get("ok"):
                     raise NotPaired(r.get("code", ""), r.get("pairing_id", ""))
             else:
                 raise RuntimeError(r.get("error", "ask failed"))
         rid = r["request_id"]
-        res = protocol.call(ep, V.AWAIT_RESULT, request_id=rid, wait=wait,
-                            timeout=wait + 10.0)
+        # Not retried if this raises: the request is already queued, and a daemon that
+        # died took the queue with it. Re-asking is the app's call, since only the app
+        # knows whether its request is safe to send twice.
+        res = self._call(V.AWAIT_RESULT, request_id=rid, wait=wait, timeout=wait + 10.0)
         if res.get("status") == "done":
             return res["result"]
         raise TimeoutError(f"no result for {rid} within {wait}s")
+
+    # -- is anyone listening? ---------------------------------------------------------
+
+    def watcher_seen_ago(self) -> Optional[float]:
+        """Seconds since a listener last reported to the channel, or None if none ever
+        has. An app cannot see the user's client, but it can see whether anything is
+        watching on its behalf — the difference between 'the agent is busy' and 'this
+        request will sit here until the user happens to type something'."""
+        return self._call(V.QUEUE_STATUS).get("watcher_seen_ago")
+
+    def watched(self, within: float = 30.0) -> bool:
+        ago = self.watcher_seen_ago()
+        return ago is not None and ago <= within
+
+    def watch_prompt(self) -> str:
+        """A paste-able line asking the user to arm a watcher, for an app that finds
+        nobody listening. The same shape as `pairing_prompt`: the app cannot reach the
+        client, but the user can carry one line across."""
+        return (f"switchboard: '{self.name}' is waiting on this session, but nothing is "
+                f"watching the channel, so its requests will not reach you until you "
+                f"type. Please start the listener and keep it running — in Claude Code, "
+                f"the Monitor tool (persistent) with: "
+                f"uv run python -m switchboard listen")
 
     def pair_and_ask(self, request: Any, show_code: Callable[[str], None],
                      pair_wait: float = 120.0, ask_wait: float = 120.0) -> Any:

@@ -32,7 +32,7 @@ class V:
     AWAIT_RESULT = "await_result"       # {request_id} (long-poll) -> {ok, status, result?}
     TAKE = "take"                       # {} (long-poll) -> {ok, request_id, app, request, urgency} | {ok, empty:true}
     DELIVER = "deliver"                 # {request_id, result} -> {ok}
-    QUEUE_STATUS = "queue_status"       # -> {ok, queued, interject, pairings, apps} (cheap; hooks poll it)
+    QUEUE_STATUS = "queue_status"       # {watching?} -> {ok, queued, interject, pairings, apps, waiting, watcher_seen_ago}
 
 
 Endpoint = tuple[str, int]

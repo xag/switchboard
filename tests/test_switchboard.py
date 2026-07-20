@@ -192,6 +192,44 @@ def test_bad_urgency_is_refused(channel):
     assert r["ok"] is False
 
 
+def test_an_app_can_tell_whether_anything_is_watching(channel):
+    """The difference an app cannot otherwise see: 'the agent is busy' versus 'nothing is
+    listening, so this sits here until the user types'."""
+    assert protocol.call(channel, V.QUEUE_STATUS)["watcher_seen_ago"] is None
+
+    # Hooks poll the same verb, and are NOT watchers — they only fire inside a turn.
+    protocol.call(channel, V.QUEUE_STATUS)
+    assert protocol.call(channel, V.QUEUE_STATUS)["watcher_seen_ago"] is None
+
+    # A listener says so, and is counted.
+    protocol.call(channel, V.QUEUE_STATUS, watching=True)
+    ago = protocol.call(channel, V.QUEUE_STATUS)["watcher_seen_ago"]
+    assert ago is not None and ago < 5
+
+
+def test_client_sees_the_watcher_and_can_ask_for_one(channel):
+    app = App("watcher-demo")
+    assert app.watcher_seen_ago() is None
+    assert app.watched() is False
+    prompt = app.watch_prompt()
+    assert "watcher-demo" in prompt and "switchboard listen" in prompt
+
+    protocol.call(channel, V.QUEUE_STATUS, watching=True)
+    assert app.watched() is True
+
+
+def test_a_dead_channel_is_stale_not_a_socket_error(channel, monkeypatch):
+    """A daemon dying mid-request used to surface a raw ConnectionResetError traceback."""
+    app = App("orphan", autostart=False)
+
+    def dead(*a, **k):
+        raise ConnectionResetError(10054, "connection forcibly closed")
+
+    monkeypatch.setattr(protocol, "call", dead)
+    with pytest.raises(Stale):
+        app.begin_pairing()
+
+
 def test_queue_status_counts_waiting_pairings(channel):
     assert protocol.call(channel, V.QUEUE_STATUS)["pairings"] == 0
     protocol.call(channel, V.PAIR_REQUEST, app="notes")

@@ -146,8 +146,10 @@ def listen(poll: float = 1.0) -> int:
         if info.get("nonce") != nonce:
             nonce, seen = info.get("nonce"), set()
         try:
+            # watching=True is what separates a listener from the hooks, which poll the
+            # same verb but cannot reach an idle session.
             status = protocol.call(discovery.endpoint_of(info), V.QUEUE_STATUS,
-                                   timeout=2.0)
+                                   timeout=2.0, watching=True)
         except OSError:
             time.sleep(poll)
             continue

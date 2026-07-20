@@ -68,7 +68,10 @@ class _CoreHandlers:
         return self._board.preauthorize({"app": app})
 
     def waiting(self) -> dict[str, Any]:
-        return self._board.queue_status()
+        # The remote listener reaches the channel through this tool, so calling it counts
+        # as watching. An agent calling it by hand also counts, which overstates things
+        # slightly — and erring toward "someone looked" is the harmless direction.
+        return self._board.queue_status({"watching": True})
 
     async def take(self) -> dict[str, Any]:
         # Non-blocking: the remote client polls, so a take never holds an HTTP request open.
@@ -266,7 +269,9 @@ class Channel:
 
         @mcp.custom_route("/waiting", methods=["GET"])
         async def waiting(request: Request) -> JSONResponse:  # noqa: ARG001
-            return JSONResponse(self.board.queue_status())
+            # Polling this IS the heartbeat: the only thing that hits this route is a
+            # watcher loop, so the app can tell whether anyone is listening for it.
+            return JSONResponse(self.board.queue_status({"watching": True}))
 
     def register_on(self, mcp: FastMCP) -> None:
         """Put this channel's user-side tools on an existing MCP server. An app that already

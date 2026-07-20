@@ -70,6 +70,11 @@ class Switchboard:
         self.by_secret: dict[str, Pending] = {}   # spawn secret -> preauthorized Pending
         self.reqs: dict[str, Req] = {}            # request_id -> Req
         self.inbox: "asyncio.Queue[str]" = asyncio.Queue()
+        # When a listener last reported in. Hooks poll queue_status too, but they are not
+        # watchers — they only fire inside a turn — so only a caller that says it is
+        # watching counts. Without this an app cannot tell "the agent is busy" from
+        # "nobody is listening at all", and those need different things from the user.
+        self.last_watch: Optional[float] = None
         self._rn = 0
         self._pn = 0
 
@@ -292,11 +297,16 @@ class Switchboard:
             req.fut.set_result(req.result)
         return {"ok": True}
 
-    def queue_status(self) -> dict:
+    def note_watcher(self) -> None:
+        self.last_watch = time.time()
+
+    def queue_status(self, msg: Optional[dict] = None) -> dict:
         """The one cheap fact the hooks poll and the listener watches: what is waiting,
         and how urgently. `queued` counts requests not yet taken; `interject` the subset
         an app marked urgency='turn'; `pairings` the codes awaiting the user; `waiting`
         names them, so a listener can tell a new request from one it already announced."""
+        if msg and msg.get("watching"):
+            self.note_watcher()
         queued = [r for r in self.reqs.values() if r.status == "queued"]
         now = time.time()
         pairings = sum(1 for p in self.pending.values()
@@ -306,7 +316,11 @@ class Switchboard:
                 "pairings": pairings,
                 "apps": sorted({r.app for r in queued}),
                 "waiting": [{"request_id": r.request_id, "app": r.app,
-                             "urgency": r.urgency} for r in queued]}
+                             "urgency": r.urgency} for r in queued],
+                # None means no listener has ever reported to this broker: requests will
+                # wait for the user to speak rather than reaching an idle session.
+                "watcher_seen_ago": (None if self.last_watch is None
+                                     else round(now - self.last_watch, 1))}
 
     # -- dispatch -------------------------------------------------------------------
 
@@ -330,7 +344,7 @@ class Switchboard:
         if verb == V.PAIR_CLAIM:
             return self.pair_claim(msg)
         if verb == V.QUEUE_STATUS:
-            return self.queue_status()
+            return self.queue_status(msg)
         if verb == V.ASK:
             return self.ask(msg)
         if verb == V.AWAIT_RESULT:
