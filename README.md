@@ -1,5 +1,40 @@
 # switchboard
 
+> ## ⚠️ Deprecated — do not build on this
+>
+> **Status: abandoned, unmaintained, kept only for the record. It may be archived or
+> removed.** Nothing here should be used in new work.
+>
+> The gap switchboard was built to close does not exist as a gap. It is a decision the
+> whole ecosystem has made, and switchboard cannot out-engineer it:
+>
+> - **Nothing initiates a turn but the user.** MCP Apps state the principle outright — "a
+>   user is never prompted out of nowhere and every elicitation traces back to something
+>   they or their agent started." A queued request is durable and correct and still cannot
+>   spend the session's next turn.
+> - **The one exception is local-only.** Claude Code can turn a watched process's stdout
+>   into an event that starts a turn. No other client can, and it does not exist on web or
+>   mobile — which is where an app most wants to reach you.
+> - **Sampling is not the thing to replace.** It is deprecated (SEP-2577, protocol
+>   2026-07-28) because server→client calls need a persistent connection that MCP v2
+>   removes. It also never carried audio, so it was never the route to voice.
+> - **For an app the session launches, MCP Apps is simply better.** The app runs inside
+>   the conversation, shares the host's state, keeps sampling (where the transport
+>   objection does not apply), and needs no daemon, no pairing and no loopback port.
+>
+> What remains is a narrow case — an app with a life outside the conversation that wants
+> the session's intelligence and can wait for the user's next turn. That is a small enough
+> claim that it did not justify a channel.
+>
+> **Use instead:** [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) for
+> anything the session launches; a provider API for anything needing intelligence with no
+> human present.
+>
+> The reasoning, including the alternatives rejected along the way, is in
+> [`ledger/`](ledger/) — that is the part worth keeping.
+
+---
+
 **[Experimental]** A channel for an app to borrow the user's live client session. The app
 sends a request; the session the user is already in services it — reasoning, using its own
 tools and context, not just completing a prompt — and the result comes back. One app paired

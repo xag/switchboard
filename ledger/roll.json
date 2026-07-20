@@ -180,6 +180,21 @@
     "digest": "6c3739207312"
   },
   {
+    "path": "switchboard-is-deprecated",
+    "kind": "decision",
+    "digest": "1d888d00a89d"
+  },
+  {
+    "path": "switchboard-is-deprecated/alt-delete-the-repository",
+    "kind": "alternative",
+    "digest": "cd4d4dbbb7cd"
+  },
+  {
+    "path": "switchboard-is-deprecated/alt-keep-maintaining-it",
+    "kind": "alternative",
+    "digest": "bf75091e01b1"
+  },
+  {
     "path": "the-channel-transports-it-does-not-adjudicate",
     "kind": "decision",
     "digest": "d9caecadbd4b"

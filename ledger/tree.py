@@ -25,8 +25,51 @@ def build() -> Quern:
                            _SPAWN_SECRET, _HOOKS_NUDGE, _SHARE_RIDES_AUTHORIZE,
                            _LISTENER, _TOLERATE_OLDER_DAEMON, _CHANNEL_DEATH_IS_TOLD,
                            _CONNECTOR_CARRIES_ITS_ARMING, _PAIRING_IS_NOT_AUTHENTICATION,
-                           _ADMITTED_ONCE_IS_REMEMBERED, _EMBED_DOES_NOT_ASK]
+                           _ADMITTED_ONCE_IS_REMEMBERED, _EMBED_DOES_NOT_ASK,
+                           _DEPRECATED]
     return quern
+
+
+_DEPRECATED = Node(
+    id="switchboard-is-deprecated",
+    kind="decision",
+    name="switchboard is abandoned: the gap it was built to close is a decision the "
+         "ecosystem made, not an omission it can engineer around",
+    payload={
+        "rationale":
+            "The channel worked — pairing, the durable queue, the return path, the "
+            "record. What it could never do is spend the session's next turn, and that "
+            "turned out to be the whole point. Nothing initiates a turn but the user: MCP "
+            "Apps say so outright ('a user is never prompted out of nowhere'), and the "
+            "single exception — Claude Code turning a watched process's stdout into an "
+            "event — is a local-dev affordance absent from web and mobile, which is "
+            "exactly where an app most wants to reach someone. Sampling was not the thing "
+            "to replace either: deprecated under SEP-2577 because server-initiated calls "
+            "need a connection MCP v2 removes, and never able to carry audio in any case. "
+            "For an app the session launches, MCP Apps is strictly better — it runs inside "
+            "the conversation, shares host state, keeps sampling where the transport "
+            "objection does not apply, and needs no daemon, pairing or loopback port. What "
+            "was left was too narrow to justify a channel.",
+        "note":
+            "Kept readable rather than deleted, because the findings cost more to "
+            "establish than the code did: how the turn boundary actually works, why "
+            "sampling went, and what a pull-based channel can and cannot promise. The "
+            "first and only intended consumer reached the same conclusion from its own "
+            "side before this was written.",
+    },
+    children=[
+        Node(id="alt-keep-maintaining-it", kind="alternative",
+             name="Keep it alive for the narrow outside-the-conversation case",
+             payload={"why": "A channel maintained for a case that rarely arises, whose "
+                             "delivery is bounded by the user's next turn anyway, is cost "
+                             "without a claim worth making."}),
+        Node(id="alt-delete-the-repository", kind="alternative",
+             name="Delete the repository outright",
+             payload={"why": "It would destroy the ledger, which is the durable output — "
+                             "the reasoning and the rejected alternatives — while saving "
+                             "nothing that archiving does not save."}),
+    ],
+)
 
 
 _SINGLETON = Node(

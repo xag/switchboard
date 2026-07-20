@@ -1,7 +1,9 @@
 [project]
 name = "switchboard"
 version = "0.0.1"
-description = "A channel for an app to borrow the user's live AI-client session: the app sends a request, the session services it, the result comes back — every request recorded, one app paired at a time. Local daemon or embedded in a hosted app."
+description = "DEPRECATED, do not use — see README. A channel for an app to borrow the user's live AI-client session; abandoned because nothing but the user can initiate a turn, and MCP Apps cover the case that remains."
+# Inactive, and said in the one place a resolver or an index will read it.
+classifiers = ["Development Status :: 7 - Inactive"]
 readme = "README.md"
 requires-python = ">=3.11"
 # The channel's two runtime faces. `mcp` is the surface the client mounts (the pairing
