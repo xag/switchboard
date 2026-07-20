@@ -24,7 +24,7 @@ def build() -> Quern:
                            _EXISTING_SESSION, _CORE_IS_TRANSPORT_FREE, _EMBED_SELF_HOSTS,
                            _SPAWN_SECRET, _HOOKS_NUDGE, _SHARE_RIDES_AUTHORIZE,
                            _LISTENER, _TOLERATE_OLDER_DAEMON, _CHANNEL_DEATH_IS_TOLD,
-                           _CONNECTOR_CARRIES_ITS_ARMING]
+                           _CONNECTOR_CARRIES_ITS_ARMING, _PAIRING_IS_NOT_AUTHENTICATION]
     return quern
 
 
@@ -376,6 +376,39 @@ _CONNECTOR_CARRIES_ITS_ARMING = Node(
              payload={"why": "It would put an app's payloads on an unauthenticated route "
                              "to save a watcher one further call it never needed to "
                              "make."}),
+    ],
+)
+
+
+_PAIRING_IS_NOT_AUTHENTICATION = Node(
+    id="pairing-answers-which-app-not-who-is-calling",
+    kind="decision",
+    name="A hosted channel takes a bearer token on its user-side surface, because pairing "
+         "never authenticated the caller — it only ever said which app was pairing",
+    payload={
+        "rationale":
+            "The two questions look alike and are not. Pairing asks 'may THIS APP put work "
+            "in front of the user', and the code matched on both sides answers it. Nothing "
+            "in that exchange says the caller of switchboard_take is the user's session. "
+            "On a reachable URL without a token, anyone could take a request — reading its "
+            "payload and denying it to the real session — deliver a forged answer back to "
+            "the app, and even approve a pending pairing themselves, which is pairing "
+            "being walked around rather than defeated. The token authenticates the caller; "
+            "pairing still decides the app. A channel mounted without one now warns "
+            "loudly, because a silent default here is a public inbox into someone's "
+            "session.",
+    },
+    children=[
+        Node(id="alt-treat-the-url-as-the-secret", kind="alternative",
+             name="Rely on the connector URL being unguessable",
+             payload={"why": "A URL is carried in logs, proxies and client config and is "
+                             "not built to be a credential; and it cannot be rotated "
+                             "without every user re-adding the connector."}),
+        Node(id="alt-let-pairing-cover-it", kind="alternative",
+             name="Treat the pairing token as protection for the user-side tools too",
+             payload={"why": "That token is issued TO THE APP for asking; the user-side "
+                             "tools are a different direction of the same channel, and "
+                             "conflating them is what left take and deliver open."}),
     ],
 )
 

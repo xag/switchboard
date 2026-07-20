@@ -90,6 +90,21 @@
     "digest": "68ae3fd00bc4"
   },
   {
+    "path": "pairing-answers-which-app-not-who-is-calling",
+    "kind": "decision",
+    "digest": "6bfb96dff0dc"
+  },
+  {
+    "path": "pairing-answers-which-app-not-who-is-calling/alt-let-pairing-cover-it",
+    "kind": "alternative",
+    "digest": "86b24f12bb73"
+  },
+  {
+    "path": "pairing-answers-which-app-not-who-is-calling/alt-treat-the-url-as-the-secret",
+    "kind": "alternative",
+    "digest": "fc4b3c1db0ac"
+  },
+  {
     "path": "pairing-is-authorized-with-a-matched-code",
     "kind": "decision",
     "digest": "27c387b886da"

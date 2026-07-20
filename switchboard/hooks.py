@@ -25,6 +25,7 @@ output and exit 0 — the channel being down must never cost the user their turn
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from typing import Optional
@@ -184,7 +185,7 @@ def _announce(status: dict, seen: set) -> None:
               f"then switchboard_deliver.", flush=True)
 
 
-def listen_remote(url: str, poll: float = 2.0) -> int:
+def listen_remote(url: str, poll: float = 2.0, token: Optional[str] = None) -> int:
     """The listener for an embedded channel: poll a hosted app's own MCP surface.
 
     A hosted app has no daemon and no discovery file — its channel lives in its own
@@ -193,27 +194,36 @@ def listen_remote(url: str, poll: float = 2.0) -> int:
     reports what is queued without taking it. Same announcements, same never-consumes
     promise; only the transport differs, which is the whole point of a transport-free core.
 
+    A guarded channel needs `token` (or SWITCHBOARD_TOKEN): a watcher that cannot
+    authenticate is locked out of exactly the channels worth protecting.
+
     The session is reconnected to on failure and `seen` is cleared when that happens: a
     restarted app's request ids start over, and re-announcing something still queued is a
     far cheaper error than going silent about it."""
     import asyncio
 
+    secret = token or os.environ.get("SWITCHBOARD_TOKEN")
+
     async def watch() -> None:
+        import httpx
         from mcp.client.session import ClientSession
         from mcp.client.streamable_http import streamable_http_client
 
+        headers = {"Authorization": f"Bearer {secret}"} if secret else {}
         while True:
             seen: set[str] = set()
             try:
-                async with streamable_http_client(url) as (read, write, _):
-                    async with ClientSession(read, write) as session:
-                        await session.initialize()
-                        while True:
-                            res = await session.call_tool("switchboard_waiting", {})
-                            status = res.structuredContent or {}
-                            if status.get("ok"):
-                                _announce(status, seen)
-                            await asyncio.sleep(poll)
+                async with httpx.AsyncClient(headers=headers) as http_client:
+                    async with streamable_http_client(
+                            url, http_client=http_client) as (read, write, _):
+                        async with ClientSession(read, write) as session:
+                            await session.initialize()
+                            while True:
+                                res = await session.call_tool("switchboard_waiting", {})
+                                status = res.structuredContent or {}
+                                if status.get("ok"):
+                                    _announce(status, seen)
+                                await asyncio.sleep(poll)
             except Exception:  # noqa: BLE001 — a hosted app restarts; keep watching
                 await asyncio.sleep(poll)
 

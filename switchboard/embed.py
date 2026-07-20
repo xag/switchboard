@@ -23,6 +23,7 @@ written ahead before it is serviced; point `record=` at the app's own store.
 from __future__ import annotations
 
 import asyncio
+import secrets
 import sys
 import time
 from typing import Any, Awaitable, Callable, Optional
@@ -77,6 +78,37 @@ class _CoreHandlers:
         return self._board.deliver({"request_id": request_id, "result": result})
 
 
+class _RequireBearer:
+    """ASGI middleware: every request to the user-side surface must carry the token.
+
+    It wraps the whole app rather than guarding each tool, so `/mcp` and `/waiting` are
+    covered by one rule and a tool added later cannot be forgotten. The comparison is
+    constant-time; a token checked with `==` leaks its prefix to a patient caller."""
+
+    def __init__(self, app: Any, token: str) -> None:
+        self._app = app
+        self._expected = f"Bearer {token}"
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self._app(scope, receive, send)
+            return
+        offered = ""
+        for key, value in scope.get("headers") or []:
+            if key == b"authorization":
+                offered = value.decode("latin-1")
+                break
+        if not secrets.compare_digest(offered, self._expected):
+            await send({"type": "http.response.start", "status": 401, "headers": [
+                (b"content-type", b"application/json"),
+                (b"www-authenticate", b"Bearer")]})
+            await send({"type": "http.response.body",
+                        "body": b'{"ok": false, "error": "this switchboard channel '
+                                b'requires a bearer token"}'})
+            return
+        await self._app(scope, receive, send)
+
+
 class Channel:
     """A hosted app's own switchboard channel — one app, one broker, in the app's process.
 
@@ -86,7 +118,8 @@ class Channel:
     """
 
     def __init__(self, app: str, record: Optional[Record] = None,
-                 public_url: Optional[str] = None) -> None:
+                 public_url: Optional[str] = None,
+                 auth_token: Optional[str] = None) -> None:
         name = (app or "").strip()
         if not name:
             raise ValueError("a channel must name its app")
@@ -98,6 +131,11 @@ class Channel:
         # behind a proxy). Only used to write an exact command into the instructions —
         # a watcher told to poll "your URL" is a watcher that never gets armed.
         self.public_url = (public_url or "").rstrip("/") or None
+        # The shared secret the user's client must present. The pairing code says WHICH
+        # APP is pairing; it says nothing about who is calling the user-side tools. On a
+        # reachable URL without this, anyone can take a request (reading its payload and
+        # denying it to the real session) and deliver a forged answer back to the app.
+        self.auth_token = auth_token or None
 
     # -- pairing (the app owns how it shows the code) --------------------------------
 
@@ -227,6 +265,11 @@ class Channel:
         plain JSON, so the watcher is a curl loop with nothing to install — an instruction
         that needs a package the user does not have is the same as no instruction."""
         where = self.public_url or "<this connector's base URL, minus /mcp>"
+        # The token goes into the command because otherwise the command cannot run: the
+        # agent has no other way to learn it. These instructions are served over the
+        # authenticated surface, so only a caller who already holds the token can read
+        # them — but it does land in the session transcript, which the app should weigh.
+        auth = f' -H "Authorization: Bearer {self.auth_token}"' if self.auth_token else ""
         return (
             f"This is a switchboard channel for the app '{self.app}': it lets the app "
             f"send you work to do, and you answer it from this session.\n\n"
@@ -239,7 +282,7 @@ class Channel:
             f"interrupt you, so start a background watcher ONCE, early in the session, "
             f"and keep it running. In Claude Code use the Monitor tool (persistent) "
             f"with this command:\n\n"
-            f"    while true; do curl -sf {where}/waiting "
+            f"    while true; do curl -sf{auth} {where}/waiting "
             f"| grep -o '\"queued\": *[1-9][0-9]*' && echo 'switchboard: work is queued "
             f"- call switchboard_take'; sleep 5; done\n\n"
             f"Each line it prints reaches you even when idle; then service the queue as "
@@ -263,5 +306,17 @@ class Channel:
     def mcp_app(self, name: str = "switchboard"):
         """A streamable-HTTP ASGI app exposing the user-side surface. Mount it in the app's
         own server (Starlette/FastAPI `mount`, or run it standalone); the URL of its `/mcp`
-        endpoint is what the user adds as a remote MCP connector."""
-        return self.build_mcp(name).streamable_http_app()
+        endpoint is what the user adds as a remote MCP connector.
+
+        With `auth_token` set, every request must carry it as a bearer token. Without one
+        the surface is open to whoever can reach the URL, which is only defensible if the
+        app puts its own authentication in front of the mount — so say so out loud rather
+        than let a public deployment happen quietly."""
+        app = self.build_mcp(name).streamable_http_app()
+        if self.auth_token:
+            return _RequireBearer(app, self.auth_token)
+        print(f"[switchboard] WARNING: channel '{self.app}' is mounted with no "
+              f"auth_token. Anyone who can reach this URL can read requests, deny them "
+              f"to your session, and deliver forged answers. Pass auth_token=..., or "
+              f"put your own authentication in front of the mount.", file=sys.stderr)
+        return app

@@ -8,7 +8,9 @@ requires-python = ">=3.11"
 # tool and the return path); `flight-recorder` instruments the boundary and records every
 # tool call from the first commit. quern is dev-only — it holds the design ledger, not the
 # runtime state (the switchboard brokers messages, it is not a quern tree).
-dependencies = ["mcp>=1.28", "flight-recorder"]
+# httpx is declared, not merely inherited from mcp: the remote listener uses it directly
+# to carry a bearer token, so it is ours to depend on.
+dependencies = ["mcp>=1.28", "flight-recorder", "httpx>=0.27"]
 
 # The CLI on PATH, so a hook can name an absolute command instead of `uv run python -m
 # switchboard` — which only ever resolved while the session sat in this project.

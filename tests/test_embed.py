@@ -86,6 +86,12 @@ def test_instructions_carry_an_armable_command():
     assert "switchboard_take" in text and "switchboard_deliver" in text
 
 
+def test_instructions_carry_the_token_so_the_command_can_run():
+    ch = Channel("hosted-notes", record=lambda e: None,
+                 public_url="https://app.example/switchboard", auth_token="s3cret")
+    assert '-H "Authorization: Bearer s3cret"' in ch.instructions()
+
+
 def test_instructions_are_honest_when_the_url_is_unknown():
     # Behind a proxy an app may not know its public URL; say so rather than print a
     # command that quietly points at nothing.
@@ -312,6 +318,108 @@ def test_waiting_route_is_plain_http_and_leaks_no_payloads(embedded):
             assert "must not appear" not in (await client.get(f"{base}/waiting")).text
 
     asyncio.run(asyncio.wait_for(flow(), timeout=20))
+
+
+@pytest.fixture
+def guarded():
+    """A hosted channel mounted WITH a bearer token, on a real loopback server."""
+    import uvicorn
+
+    ch = Channel("guarded-notes", record=lambda e: None, auth_token="right-token")
+    loop = asyncio.new_event_loop()
+    config = uvicorn.Config(ch.mcp_app(), host="127.0.0.1", port=0,
+                            log_level="warning", lifespan="on")
+    server = uvicorn.Server(config)
+
+    def run():
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(server.serve())
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    deadline = time.time() + 5
+    while not server.started and time.time() < deadline:
+        time.sleep(0.05)
+    assert server.started
+    port = server.servers[0].sockets[0].getsockname()[1]
+    yield ch, f"http://127.0.0.1:{port}", loop
+    server.should_exit = True
+    t.join(timeout=5)
+
+
+def test_an_unauthenticated_caller_is_refused_everywhere(guarded):
+    """Without this, anyone who can reach the URL can take a request (reading its payload
+    and denying it to the real session) and deliver a forged answer to the app."""
+    ch, base, loop = guarded
+    import httpx
+
+    async def flow():
+        async with httpx.AsyncClient() as client:
+            # The plain status route: refused.
+            assert (await client.get(f"{base}/waiting")).status_code == 401
+            # A wrong token is no better than none.
+            bad = await client.get(f"{base}/waiting",
+                                   headers={"Authorization": "Bearer wrong-token"})
+            assert bad.status_code == 401
+            # The MCP endpoint itself: refused before any handshake.
+            assert (await client.post(f"{base}/mcp", json={})).status_code == 401
+            # With the token, the status route answers.
+            ok = await client.get(f"{base}/waiting",
+                                  headers={"Authorization": "Bearer right-token"})
+            assert ok.status_code == 200 and ok.json()["ok"] is True
+
+    asyncio.run(asyncio.wait_for(flow(), timeout=20))
+
+
+def test_the_authorized_client_can_still_service_the_channel(guarded):
+    """The guard must not break the thing it protects: a caller holding the token drives
+    the full pairing-and-service flow over MCP exactly as before."""
+    ch, base, loop = guarded
+
+    async def on_server(coro):
+        return await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(coro, loop))
+
+    async def flow():
+        from mcp.client.session import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+
+        import httpx
+
+        code = await on_server(_call(ch.begin_pairing))
+        headers = {"Authorization": "Bearer right-token"}
+        async with httpx.AsyncClient(headers=headers) as http_client:
+            async with streamable_http_client(
+                    f"{base}/mcp", http_client=http_client) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    pend = (await session.call_tool(
+                        "switchboard_pairings", {})).structuredContent["pairings"][0]
+                    auth = (await session.call_tool("switchboard_authorize",
+                            {"pairing_id": pend["pairing_id"],
+                             "code": code})).structuredContent
+                    assert auth["ok"]
+                    assert await on_server(_call(ch.pairing_status)) == "authorized"
+
+                    ask = asyncio.run_coroutine_threadsafe(ch.ask({"q": 1}), loop)
+                    took = None
+                    for _ in range(40):
+                        took = (await session.call_tool(
+                            "switchboard_take", {})).structuredContent
+                        if not took.get("empty"):
+                            break
+                        await asyncio.sleep(0.05)
+                    assert took and took["request"] == {"q": 1}
+                    await session.call_tool(
+                        "switchboard_deliver",
+                        {"request_id": took["request_id"], "result": "ok"})
+                    assert await asyncio.wrap_future(ask) == "ok"
+
+    asyncio.run(asyncio.wait_for(flow(), timeout=20))
+
+
+def test_mounting_without_a_token_warns_loudly(capsys):
+    Channel("open-notes", record=lambda e: None).mcp_app()
+    assert "WARNING" in capsys.readouterr().err
 
 
 def test_remote_authorize_refuses_a_mismatched_code(embedded):

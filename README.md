@@ -95,10 +95,17 @@ instead **embeds** the broker: it holds a `Channel` in its own process and serve
 switchboard MCP surface over HTTP. The user adds the app's URL as a remote MCP connector once
 — that, plus the same pairing handshake, is the consent. No local daemon, no relay we run.
 
+**Guard the surface.** Pairing says *which app* may send work; it does not say who is
+calling `switchboard_take`. Without a token, anyone who can reach the URL can read your
+requests, deny them to your session, and deliver forged answers back to the app. Pass
+`auth_token=` (the user's client sends it as a bearer token), or put your own
+authentication in front of the mount. A channel mounted with neither warns on stderr.
+
 ```python
 from switchboard.embed import Channel, NotPaired
 
-channel = Channel("my-hosted-app", record=my_wal_sink)   # the app's own write-ahead store
+channel = Channel("my-hosted-app", record=my_wal_sink,   # the app's own write-ahead store
+                  auth_token=os.environ["SWITCHBOARD_TOKEN"])
 
 # Mount the user-side surface in the app's ASGI server (Starlette / FastAPI):
 app.mount("/switchboard", channel.mcp_app())   # its /mcp endpoint is the connector URL

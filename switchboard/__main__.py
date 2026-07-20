@@ -12,7 +12,8 @@
                     Run under a client watcher (Monitor) so a request reaches the agent
                     even while the session sits idle — the hooks cannot do that alone.
                     --url URL watches a hosted app's embedded channel over MCP instead
-                    of the local daemon.
+                    of the local daemon; --token (or SWITCHBOARD_TOKEN) authenticates
+                    to a guarded one.
     mcp             Serve the MCP surface on stdio (pairing + the return path).
     status          Print whether a live switchboard is reachable, and where.
 """
@@ -111,8 +112,12 @@ def main(argv: list[str]) -> int:
             if not url:
                 print("--url needs the channel's MCP endpoint", file=sys.stderr)
                 return 2
+        token = None
+        if "--token" in argv:
+            i = argv.index("--token")
+            token = argv[i + 1] if len(argv) > i + 1 else None
         try:
-            return listen_remote(url) if url else listen()
+            return listen_remote(url, token=token) if url else listen()
         except KeyboardInterrupt:
             return 0
 
