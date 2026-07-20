@@ -9,7 +9,7 @@ silence, which is the invariant that matters most: a down channel never costs a 
 from __future__ import annotations
 
 from switchboard.hooks import (post_tool_context, prompt_context, queue_status,
-                               stop_decision)
+                               session_start_context, stop_decision)
 
 
 def _status(queued=0, interject=0, pairings=0, apps=()):
@@ -59,6 +59,22 @@ def test_prompt_mentions_requests_and_pairings():
 
 def test_prompt_is_silent_when_nothing_waits():
     assert prompt_context(_status()) is None
+
+
+# -- session start asks for the one step a hook cannot take ---------------------------
+
+def test_session_start_asks_the_agent_to_arm_the_listener():
+    out = session_start_context(live=True)
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    assert out["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert "switchboard listen" in ctx
+    # It must say WHY, or the agent has no reason to spend a tool call on it.
+    assert "idle" in ctx
+
+
+def test_session_start_is_silent_when_the_channel_is_down():
+    # Nothing to listen to, and a session start is not the place for advice about it.
+    assert session_start_context(live=False) is None
 
 
 # -- a replaced channel is reported, never papered over -------------------------------

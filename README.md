@@ -34,7 +34,9 @@ faithfully and keeps a record; it does not judge what an app sends.
   client already generates, so a session parked at the prompt hears nothing — for that,
   **`python -m switchboard listen`** prints one line per queued request and the client
   watches its stdout (in Claude Code, the `Monitor` tool). It announces and never
-  consumes: `take` stays the agent's act. The channel still spawns nothing and drives no
+  consumes: `take` stays the agent's act. The `SessionStart` hook asks the agent to arm
+  the listener, since a hook cannot arm it itself — a hook exits, and a process it spawns
+  detached writes where nobody reads. The channel still spawns nothing and drives no
   session.
 - **Liveness is a fact.** If the daemon dies, an app sees itself go `stale`.
 

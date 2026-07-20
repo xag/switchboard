@@ -93,6 +93,32 @@ def prompt_context(status: Optional[dict]) -> Optional[dict]:
         "additionalContext": "switchboard: " + "; ".join(parts) + "."}}
 
 
+def session_start_context(live: bool) -> Optional[dict]:
+    """Ask the agent, once at session start, to arm the listener.
+
+    The hook cannot arm it: a hook runs and exits, a process it spawns detached writes its
+    stdout where nobody reads, and no hook directive registers a watcher. But a hook can
+    inject context, and the agent CAN arm it — so the last step that must belong to the
+    client is at least requested automatically, instead of waiting to be remembered.
+
+    Silent when the channel is down: there is nothing to listen to, and a session start
+    must never be spent on advice about a dead channel."""
+    if not live:
+        return None
+    return {"hookSpecificOutput": {
+        "hookEventName": "SessionStart",
+        "additionalContext":
+            "switchboard: the channel is up. The Stop/PostToolUse/UserPromptSubmit hooks "
+            "surface app requests while you are working, but no hook fires while you sit "
+            "idle at the prompt - so a request sent then waits until the user types. To "
+            "close that gap, arm the listener early in this session: run "
+            "`uv run python -m switchboard listen` under whatever your client offers for "
+            "streaming a background process's stdout (in Claude Code, the Monitor tool, "
+            "persistent). Each line it prints then reaches you even while idle. It only "
+            "announces - service each request with switchboard_take, then "
+            "switchboard_deliver."}}
+
+
 def listen(poll: float = 1.0) -> int:
     """The listener: one stdout line per app request, for as long as it runs.
 

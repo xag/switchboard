@@ -26,14 +26,22 @@ def main(argv: list[str]) -> int:
         return run()
 
     if cmd == "hook":
-        # Spawn-or-find, say nothing on stdout that the client would parse as a directive,
-        # and never fail the session start over the channel being down.
+        # Spawn-or-find, then ask the agent to arm the listener — the one step of the
+        # wake-on-idle path a hook cannot take itself. The human line goes to stderr;
+        # stdout carries only the hook protocol's own JSON. Never fail the session start
+        # over the channel being down.
         from .daemon import ensure_running
+        from .hooks import session_start_context
+        live = False
         try:
             info = ensure_running()
             print(f"switchboard ready on 127.0.0.1:{info['port']}", file=sys.stderr)
+            live = True
         except Exception as e:  # noqa: BLE001 — a down channel must not block the session
             print(f"switchboard: not started ({e})", file=sys.stderr)
+        out = session_start_context(live)
+        if out is not None:
+            print(json.dumps(out))
         return 0
 
     if cmd in ("hook-stop", "hook-post-tool", "hook-prompt"):
