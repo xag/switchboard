@@ -72,6 +72,27 @@ def test_channel_needs_a_name():
         Channel("   ")
 
 
+def test_instructions_carry_an_armable_command():
+    """A hosted app's user installs nothing, so the connector is the only thing that
+    reaches their client. If the instruction to watch does not travel here, it does not
+    travel — and it has to name a command that runs with nothing installed."""
+    ch = Channel("hosted-notes", record=lambda e: None,
+                 public_url="https://app.example/switchboard")
+    text = ch.instructions()
+    assert "hosted-notes" in text
+    assert "https://app.example/switchboard/waiting" in text  # the exact URL, not a hint
+    assert "curl" in text            # no switchboard install required to run it
+    assert "Monitor" in text         # named for the client that has one
+    assert "switchboard_take" in text and "switchboard_deliver" in text
+
+
+def test_instructions_are_honest_when_the_url_is_unknown():
+    # Behind a proxy an app may not know its public URL; say so rather than print a
+    # command that quietly points at nothing.
+    text = Channel("hosted-notes", record=lambda e: None).instructions()
+    assert "<this connector's base URL" in text
+
+
 def test_channel_claims_a_preauthorized_secret():
     ch = Channel("hosted-notes", record=lambda e: None)
     # The user's session minted the secret over the surface (switchboard_preauthorize)
@@ -252,6 +273,43 @@ def test_waiting_reports_the_queue_without_consuming_it(embedded):
                 await session.call_tool("switchboard_deliver",
                                         {"request_id": took["request_id"], "result": "ok"})
                 assert await asyncio.wrap_future(ask) == "ok"
+
+    asyncio.run(asyncio.wait_for(flow(), timeout=20))
+
+
+def test_waiting_route_is_plain_http_and_leaks_no_payloads(embedded):
+    """The arming command is a curl loop, so this must answer plain GET with plain JSON —
+    no MCP handshake, no session header. And it must describe the queue without repeating
+    what an app sent: that is the session's business, not a status endpoint's."""
+    ch, url, loop, _ = embedded
+    import httpx
+
+    base = url.rsplit("/mcp", 1)[0]
+
+    async def flow():
+        async with httpx.AsyncClient() as client:
+            empty = (await client.get(f"{base}/waiting")).json()
+            assert empty["ok"] and empty["queued"] == 0
+
+            # Pair and ask, so something is actually queued.
+            code = await asyncio.wrap_future(
+                asyncio.run_coroutine_threadsafe(_call(ch.begin_pairing), loop))
+            ch.board.authorize({"pairing_id": ch._pairing_id, "code": code})
+            await asyncio.wrap_future(
+                asyncio.run_coroutine_threadsafe(_call(ch.pairing_status), loop))
+            asyncio.run_coroutine_threadsafe(
+                ch.ask({"secret-payload": "must not appear"}, urgency="turn"), loop)
+
+            seen = {}
+            for _ in range(40):
+                seen = (await client.get(f"{base}/waiting")).json()
+                if seen["queued"]:
+                    break
+                await asyncio.sleep(0.05)
+
+            assert seen["queued"] == 1 and seen["interject"] == 1
+            assert seen["waiting"][0]["app"] == "hosted-notes"
+            assert "must not appear" not in (await client.get(f"{base}/waiting")).text
 
     asyncio.run(asyncio.wait_for(flow(), timeout=20))
 

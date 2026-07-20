@@ -23,7 +23,8 @@ def build() -> Quern:
     quern.root.children = [_SINGLETON, _TRANSPORT, _PAIRING, _NEUTRAL, _WRITE_AHEAD,
                            _EXISTING_SESSION, _CORE_IS_TRANSPORT_FREE, _EMBED_SELF_HOSTS,
                            _SPAWN_SECRET, _HOOKS_NUDGE, _SHARE_RIDES_AUTHORIZE,
-                           _LISTENER, _TOLERATE_OLDER_DAEMON, _CHANNEL_DEATH_IS_TOLD]
+                           _LISTENER, _TOLERATE_OLDER_DAEMON, _CHANNEL_DEATH_IS_TOLD,
+                           _CONNECTOR_CARRIES_ITS_ARMING]
     return quern
 
 
@@ -338,6 +339,43 @@ _SHARE_RIDES_AUTHORIZE = Node(
              payload={"why": "A second consent path drifts from authorize and doubles "
                              "what the user must trust; the existing code already has "
                              "the bounds that matter."}),
+    ],
+)
+
+
+_CONNECTOR_CARRIES_ITS_ARMING = Node(
+    id="the-connector-carries-its-own-arming-instruction",
+    kind="decision",
+    name="A hosted channel's MCP instructions name the exact watcher command, and a plain "
+         "HTTP /waiting route makes that command runnable with nothing installed",
+    payload={
+        "rationale":
+            "A hosted app's user installs nothing — no package, no hooks, no SessionStart "
+            "context — so the connector is the only thing that reaches their client. An "
+            "instruction that does not travel there does not travel at all. And it must "
+            "name a command that runs on a bare machine: MCP wants an initialize "
+            "handshake and a session header before it will answer a question, which is no "
+            "way to arm a shell watcher, so the same read-only fact is served as ordinary "
+            "JSON at /waiting and the command is a curl loop. /waiting carries counts, app "
+            "names, request ids and urgencies — never a payload, because what an app sent "
+            "is the session's business and a status route has no business repeating it.",
+    },
+    children=[
+        Node(id="alt-rely-on-the-local-install", kind="alternative",
+             name="Assume the user also installed switchboard locally and has the hooks",
+             payload={"why": "Embed mode exists precisely for the user who installs "
+                             "nothing; requiring the local package to receive a hosted "
+                             "app's requests takes back the promise that defines it."}),
+        Node(id="alt-poll-the-tool-from-the-turn", kind="alternative",
+             name="Tell the agent to call switchboard_waiting itself, periodically",
+             payload={"why": "A tool call happens inside a turn, so it covers exactly the "
+                             "case the hooks already cover and misses the one that "
+                             "matters — the session parked at the prompt."}),
+        Node(id="alt-serve-payloads-on-waiting", kind="alternative",
+             name="Return the queued requests in full from /waiting",
+             payload={"why": "It would put an app's payloads on an unauthenticated route "
+                             "to save a watcher one further call it never needed to "
+                             "make."}),
     ],
 )
 

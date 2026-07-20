@@ -116,15 +116,21 @@ tools straight on it with `channel.register_on(mcp)` — then the client that sp
 services requests over the same connection, no second connector. This is the shape that
 replaces MCP sampling on the app's own surface.
 
-Wake-on-idle works here too, over MCP rather than the loopback wire:
+Wake-on-idle works here too, and **without the user installing anything**. Give the channel
+its public URL and the connector carries its own arming instruction:
 
-```
-switchboard listen --url https://my-app.example/switchboard/mcp
+```python
+channel = Channel("my-app", record=my_wal_sink, public_url="https://my-app.example/switchboard")
 ```
 
-It polls `switchboard_waiting` — which reports what is queued **without taking it** — and
-prints the same lines as the local listener, so a hosted app's request reaches a session
-parked at the prompt. Run it under the same client watcher (in Claude Code, `Monitor`).
+The MCP server's `instructions` then tell the agent how to service requests *and* hand it
+the exact watcher command to start — a curl loop against `GET /waiting`, a plain-JSON route
+mounted beside `/mcp`. Plain HTTP because MCP wants a handshake and a session header before
+it will answer, which is no way to arm a shell watcher. `/waiting` reports counts, apps,
+request ids and urgencies, and never a payload.
+
+Someone who *does* have switchboard installed can point the local listener at the same
+channel instead: `switchboard listen --url https://my-app.example/switchboard/mcp`.
 
 It is the same broker core and the same tools as the daemon — only the faces differ:
 the app reaches the core in-process (`ask`), the user's client reaches it over the network.

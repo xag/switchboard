@@ -145,6 +145,26 @@
     "digest": "09054873ddd3"
   },
   {
+    "path": "the-connector-carries-its-own-arming-instruction",
+    "kind": "decision",
+    "digest": "01bc4516d998"
+  },
+  {
+    "path": "the-connector-carries-its-own-arming-instruction/alt-poll-the-tool-from-the-turn",
+    "kind": "alternative",
+    "digest": "070a6c0ee86c"
+  },
+  {
+    "path": "the-connector-carries-its-own-arming-instruction/alt-rely-on-the-local-install",
+    "kind": "alternative",
+    "digest": "51e6240317ec"
+  },
+  {
+    "path": "the-connector-carries-its-own-arming-instruction/alt-serve-payloads-on-waiting",
+    "kind": "alternative",
+    "digest": "d0dcd0062e89"
+  },
+  {
     "path": "write-ahead-before-send",
     "kind": "decision",
     "digest": "f4a6f98da9ba"

@@ -85,7 +85,8 @@ class Channel:
     shared log, but a hosted app should pass its own so the record lives with the app.
     """
 
-    def __init__(self, app: str, record: Optional[Record] = None) -> None:
+    def __init__(self, app: str, record: Optional[Record] = None,
+                 public_url: Optional[str] = None) -> None:
         name = (app or "").strip()
         if not name:
             raise ValueError("a channel must name its app")
@@ -93,6 +94,10 @@ class Channel:
         self.board = Switchboard(record=record if record is not None else wal.append)
         self._token: Optional[str] = None
         self._pairing_id: Optional[str] = None
+        # Where this channel is reachable from outside, if the app knows (it may sit
+        # behind a proxy). Only used to write an exact command into the instructions —
+        # a watcher told to poll "your URL" is a watcher that never gets armed.
+        self.public_url = (public_url or "").rstrip("/") or None
 
     # -- pairing (the app owns how it shows the code) --------------------------------
 
@@ -185,6 +190,23 @@ class Channel:
 
     # -- the remote MCP surface the app mounts ---------------------------------------
 
+    def _register_waiting_route(self, mcp: FastMCP) -> None:
+        """A plain `GET /waiting` returning the same read-only queue status as the tool.
+
+        MCP is a poor thing to poll from a shell: it wants an initialize handshake and a
+        session header before it will answer a question. A watcher has to be armable with
+        one line and no dependencies, so the same fact is served as ordinary JSON.
+
+        It carries counts, app names, request ids and urgencies — never a payload. What an
+        app sent is the session's business, and a status endpoint has no business
+        repeating it."""
+        from starlette.requests import Request
+        from starlette.responses import JSONResponse
+
+        @mcp.custom_route("/waiting", methods=["GET"])
+        async def waiting(request: Request) -> JSONResponse:  # noqa: ARG001
+            return JSONResponse(self.board.queue_status())
+
     def register_on(self, mcp: FastMCP) -> None:
         """Put this channel's user-side tools on an existing MCP server. An app that already
         serves its own surface carries the channel on it — the client that spawned the app
@@ -193,10 +215,41 @@ class Channel:
         uses it for the standalone (separate-surface) case."""
         _tools.register(mcp, _CoreHandlers(self.board))
 
+    def instructions(self) -> str:
+        """What the connector itself tells the agent — including how to start listening.
+
+        A hosted app's user installs nothing: no package, no hooks, no SessionStart
+        context. The only thing that reaches their client is this connector, so if the
+        instruction to watch the channel does not travel here, it does not travel at all,
+        and the app's requests sit unseen until the user happens to ask.
+
+        It names a concrete command, not a capability. `/waiting` is plain HTTP returning
+        plain JSON, so the watcher is a curl loop with nothing to install — an instruction
+        that needs a package the user does not have is the same as no instruction."""
+        where = self.public_url or "<this connector's base URL, minus /mcp>"
+        return (
+            f"This is a switchboard channel for the app '{self.app}': it lets the app "
+            f"send you work to do, and you answer it from this session.\n\n"
+            f"Servicing: call switchboard_waiting to see what is queued (it takes "
+            f"nothing), switchboard_take to pull one request, then switchboard_deliver "
+            f"to return the result. Authorize a first-time pairing with "
+            f"switchboard_pairings and switchboard_authorize, matching the code the app "
+            f"shows the user.\n\n"
+            f"IMPORTANT - so requests reach you while you sit idle: nothing here can "
+            f"interrupt you, so start a background watcher ONCE, early in the session, "
+            f"and keep it running. In Claude Code use the Monitor tool (persistent) "
+            f"with this command:\n\n"
+            f"    while true; do curl -sf {where}/waiting "
+            f"| grep -o '\"queued\": *[1-9][0-9]*' && echo 'switchboard: work is queued "
+            f"- call switchboard_take'; sleep 5; done\n\n"
+            f"Each line it prints reaches you even when idle; then service the queue as "
+            f"above. Without it, this app's requests wait until the user next types.")
+
     def build_mcp(self, name: str = "switchboard") -> FastMCP:
         """The user-side tools bound to this channel's core, with flight recording armed."""
-        mcp = FastMCP(name)
+        mcp = FastMCP(name, instructions=self.instructions())
         self.register_on(mcp)
+        self._register_waiting_route(mcp)
         try:
             from flight_recorder import install_mcp
 
