@@ -2,8 +2,8 @@
 
 > ## ⚠️ Deprecated — do not build on this
 >
-> **Status: abandoned, unmaintained, kept only for the record. It may be archived or
-> removed.** Nothing here should be used in new work.
+> **Status: archived and unmaintained — read-only, kept for the record.** Nothing here
+> should be used in new work.
 >
 > The gap switchboard was built to close does not exist as a gap. It is a decision the
 > whole ecosystem has made, and switchboard cannot out-engineer it:
